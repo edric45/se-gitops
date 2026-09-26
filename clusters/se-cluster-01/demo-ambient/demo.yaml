@@ -1,0 +1,103 @@
+# Demo: nginx in the ambient mesh, reachable through the shared Gateway.
+#
+#   http://<Gateway VIP>/   (kubectl -n istio-ingress get gateway public)
+#
+# Proves the chain: Avi VIP -> Gateway (Envoy) -> HTTPRoute -> ztunnel (mTLS)
+# -> nginx. Delete this folder when it has served its purpose.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-ambient
+  labels:
+    # Enrols every pod in this namespace into ambient: ztunnel captures their
+    # traffic. No sidecar, no restart.
+    istio.io/dataplane-mode: ambient
+    # nginx-unprivileged satisfies PodSecurity "restricted".
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-content
+  namespace: demo-ambient
+data:
+  index.html: |
+    <!doctype html>
+    <html lang="en"><head><meta charset="utf-8"><title>se-cluster-01 ambient demo</title></head>
+    <body style="font-family:sans-serif;margin:3rem">
+      <h1>nginx on se-cluster-01, in the Istio ambient mesh</h1>
+      <p>Avi VIP &rarr; Istio Gateway (Gateway API) &rarr; ztunnel mTLS &rarr; nginx.</p>
+    </body></html>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: demo-ambient
+  labels: {app: nginx}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: nginx}
+  template:
+    metadata:
+      labels: {app: nginx}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: nginx
+        image: nginxinc/nginx-unprivileged:1.27-alpine
+        ports:
+        - {name: http, containerPort: 8080}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits:   {cpu: 200m, memory: 128Mi}
+        readinessProbe:
+          httpGet: {path: /, port: http}
+        volumeMounts:
+        - {name: content, mountPath: /usr/share/nginx/html}
+        - {name: cache,   mountPath: /var/cache/nginx}
+        - {name: run,     mountPath: /tmp}
+      volumes:
+      - name: content
+        configMap: {name: nginx-content}
+      - name: cache
+        emptyDir: {}
+      - name: run
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: demo-ambient
+  labels: {app: nginx}
+spec:
+  type: ClusterIP
+  selector: {app: nginx}
+  ports:
+  - {name: http, port: 80, targetPort: http, appProtocol: http}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: nginx
+  namespace: demo-ambient
+spec:
+  parentRefs:
+  - name: public
+    namespace: istio-ingress
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /}
+    backendRefs:
+    - name: nginx
+      port: 80

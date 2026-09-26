@@ -75,16 +75,20 @@ gitops/        applied by hand                           -> Supervisor, se-ns-ar
                  projects/supervisor-wld  -> apps deploying to the Supervisor
                  projects/se-cluster-01   -> apps deploying into the workload cluster
                  applicationsets/se-cluster-01-addons -> one app per add-on folder
+                 applicationsets/se-cluster-01-apps   -> one app per clusters/ folder
 supervisor/    Cluster CR, AddonConfig/AddonInstall      -> Supervisor, se-ns-argo
                + se-cluster-01-addons/<addon>/: VKS add-ons, one folder each
                + se-jumpbox/: browser-accessible debug desktop VM
+clusters/      se-cluster-01/<app>/: deployed INSIDE the cluster by ArgoCD
+                 istio-ingress/  shared Gateway (class istio) on an Avi VIP
+                 demo-ambient/   nginx in the ambient mesh behind that Gateway
+scripts/       check-addon-values.py: validate add-on values before pushing
 ```
 
 Still to come:
 
 ```
 gitops/        the app-of-apps root                      -> Supervisor, se-ns-argo
-clusters/      per-cluster platform + workload manifests -> the workload cluster
 ```
 
 The top-level directory names the **API server**. That is the one thing to get

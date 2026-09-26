@@ -1,0 +1,37 @@
+# The cluster's shared ingress: a Gateway API Gateway, class istio.
+#
+# istiod sees this Gateway and generates, in this namespace:
+#   deployment/public-istio   Envoy
+#   service/public-istio      type LoadBalancer -> Avi VIP via the Supervisor
+# The VIP shows up as the Gateway's ADDRESS:
+#   kubectl -n istio-ingress get gateway public
+#
+# Apps attach with an HTTPRoute in their own namespace:
+#   parentRefs: [{name: public, namespace: istio-ingress}]
+#
+# The gateway pod sits OUTSIDE ambient (istiod labels it
+# dataplane-mode=none); it still reaches ambient backends over mTLS.
+# To make external traffic also pass a namespace's waypoint (so L7
+# AuthorizationPolicy applies to it), label the backend Service
+# istio.io/ingress-use-waypoint=true.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-ingress
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: public
+  namespace: istio-ingress
+spec:
+  gatewayClassName: istio
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: All
+  # HTTPS later: add a listener with tls.certificateRefs pointing at a
+  # Secret in this namespace (cert-manager can issue it).

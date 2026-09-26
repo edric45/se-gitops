@@ -13,6 +13,7 @@ which syncs automatically.
 | Folder | Add-on | Release |
 |---|---|---|
 | `cert-manager/` | cert-manager + self-signed ClusterIssuer `se-selfsigned` | 1.20.2 |
+| `istio/` | Istio, **ambient** mode (ztunnel + istio-cni); ingress via Gateway API | 1.30.0 |
 
 Kept apart from `../se-cluster-01/` on purpose: that app holds the Cluster CR
 and must never prune or delete. Add-ons are safe to add and remove.
@@ -24,7 +25,13 @@ and must never prune or delete. Add-ons are safe to add and remove.
    `kubectl --context 172.17.10.2 -n vmware-system-vks-public get addonconfigdefinition <release> -o yaml`
 3. Copy `cert-manager/` to `<addon>/`, rename the file, and change the object
    names, `addonConfigNameTemplate`, `addonRef`, `releaseFilter` and `values`.
-4. Validate: `kubectl --context se-ns-argo apply --dry-run=server -f <addon>/`
+4. Validate **both** — they catch different things:
+   ```sh
+   scripts/check-addon-values.py supervisor/se-ns-argo/se-cluster-01-addons/<addon>/*.yaml   # the values
+   kubectl --context se-ns-argo apply --dry-run=server -f supervisor/se-ns-argo/se-cluster-01-addons/<addon>/   # the objects
+   ```
+   The dry-run does **not** check `values` — VKS validates them later, and a
+   typo would only surface as a failed `AddonConfig` after the push.
 5. Commit and push. The app `se-cluster-01-<addon>` appears and syncs.
 6. Check: `kubectl --context se-ns-argo get clusteraddon se-cluster-01-<addon>` → READY True
 

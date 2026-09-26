@@ -1,0 +1,70 @@
+# Istio on se-cluster-01, AMBIENT mode, as a VKS add-on.
+#
+#   ztunnel      per-node DaemonSet: L4 mTLS + identity for enrolled pods
+#   istio-cni    per-node DaemonSet: redirects enrolled pods' traffic to ztunnel
+#   istiod       control plane; also registers the Gateway API classes
+#                istio / istio-waypoint / istio-remote
+#
+# Pods join the mesh by namespace label -- no sidecars, no restarts:
+#   kubectl label ns <ns> istio.io/dataplane-mode=ambient
+#
+# INGRESS is the Gateway API, not the add-on's classic gateways:
+# a Gateway with gatewayClassName: istio makes istiod create an Envoy
+# Deployment + a LoadBalancer Service, which gets an Avi VIP via the
+# Supervisor. See clusters/se-cluster-01/istio-ingress/.
+#
+# Gateway API CRDs (v1.4.0, standard channel) are ALREADY in the cluster,
+# installed by the platform. Do not add the gateway-api add-on as well.
+#
+# Proven on this platform (Antrea CNI) in se-vks-platform:
+#   namespaces/se-namespace/clusters/se-cluster-01/addons/pure-istio/
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonConfig
+metadata:
+  name: se-cluster-01-istio
+  namespace: se-ns-argo
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  values:
+    istio:
+      ambientMode:
+        enabled: true
+      # Required for ambient.
+      istioCNI:
+        enabled: true
+      # The classic ingress/egress gateways run in SIDECAR mode. Not needed:
+      # Gateway API gateways (class istio) are generated on demand by istiod,
+      # and the GatewayClasses exist without these.
+      gateways:
+        ingress:
+          enabled: false
+        egress:
+          enabled: false
+      # PERMISSIVE mesh-wide. Tighten per namespace with PeerAuthentication.
+      enableStrictMTLS: false
+      pilot:
+        replicas: 2
+      meshConfig:
+        accessLogFile: /dev/stdout
+---
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonInstall
+metadata:
+  name: se-cluster-01-istio
+  namespace: se-ns-argo
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  addonRef:
+    name: istio
+  addonConfigNameTemplate: se-cluster-01-istio
+  clusters:
+  - selector:
+      matchLabels:
+        cluster.x-k8s.io/cluster-name: se-cluster-01
+  crossNamespaceSelection: Blocked
+  releaseFilter:
+    ref:
+      name: istio.kubernetes.vmware.com.1.30.0-vmware.1-vks.1
+  stopMatchingBehavior: Delete

@@ -1,0 +1,55 @@
+# cert-manager on se-cluster-01, as a VKS add-on.
+#
+# Declared HERE, on the Supervisor (se-ns-argo); VKS installs it INTO the
+# cluster. So this is supervisor/ and project supervisor-wld, not the
+# workload-cluster project.
+#
+#   AddonConfig   the settings (values validated against the release's
+#                 AddonConfigDefinition in vmware-system-vks-public)
+#   AddonInstall  which add-on, which cluster(s), which pinned release
+#
+# Check what this Supervisor offers before bumping the release:
+#   kubectl --context 172.17.10.2 get addonreleases -A | grep cert-manager
+#
+# issuers[] bootstraps a self-signed ClusterIssuer (the root of a private
+# chain). Only self_signed issuers can be declared here; CA, Vault or ACME
+# issuers are ordinary manifests applied inside the cluster.
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonConfig
+metadata:
+  name: se-cluster-01-cert-manager
+  namespace: se-ns-argo
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  values:
+    namespace: cert-manager
+    issuers:
+    - name: se-selfsigned
+      self_signed:
+        private_key:
+          algorithm: RSA
+          size: 4096
+---
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonInstall
+metadata:
+  name: se-cluster-01-cert-manager
+  namespace: se-ns-argo
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  addonRef:
+    name: cert-manager
+  addonConfigNameTemplate: se-cluster-01-cert-manager
+  clusters:
+  - selector:
+      matchLabels:
+        cluster.x-k8s.io/cluster-name: se-cluster-01
+  crossNamespaceSelection: Blocked
+  releaseFilter:
+    ref:
+      name: cert-manager.kubernetes.vmware.com.1.20.2-vmware.1-vks.1
+  # Deleting this AddonInstall uninstalls cert-manager from the cluster.
+  # Recoverable (re-sync), unlike deleting the Cluster CR.
+  stopMatchingBehavior: Delete

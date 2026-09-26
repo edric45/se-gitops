@@ -75,6 +75,7 @@ gitops/        projects/: AppProjects, applied by hand   -> Supervisor, se-ns-ar
                  supervisor-wld  -> apps deploying to the Supervisor
                  se-cluster-01   -> apps deploying into the workload cluster
 supervisor/    Cluster CR, AddonConfig/AddonInstall      -> Supervisor, se-ns-argo
+               + se-cluster-01-addons/: VKS add-ons (cert-manager, ...)
                + se-jumpbox/: browser-accessible debug desktop VM
 ```
 

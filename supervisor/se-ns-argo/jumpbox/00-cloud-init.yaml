@@ -1,0 +1,245 @@
+# First-boot configuration for the jumpbox VM.
+#
+# This Secret holds NO secrets -- only the cloud-config, which is public in
+# this repo anyway. The one real credential (the desktop/code-server/sudo
+# password) is generated ON the VM at first boot and written to
+# /home/jumpbox/CREDENTIALS.txt, readable over SSH with the key below.
+#
+# cloud-init runs this ONCE, on first boot. Editing it later changes nothing
+# on a running VM -- re-run the script by hand, or recreate the VM.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jumpbox-cloud-init
+  namespace: se-ns-argo
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+type: Opaque
+stringData:
+  user-data: |
+    #cloud-config
+    hostname: jumpbox
+
+    users:
+      - name: jumpbox
+        gecos: SE lab jumpbox
+        shell: /bin/bash
+        groups: [sudo]
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        # Locked until the setup script sets the generated password.
+        lock_passwd: true
+        ssh_authorized_keys:
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJq8nI9cVIYWM7KEegRXx5t1ewp/YdXA+hX6JfAxxh8r ss902385@broadcom.net
+    ssh_pwauth: false
+
+    write_files:
+      - path: /etc/systemd/system/kasmvnc.service
+        permissions: "0644"
+        content: |
+          [Unit]
+          Description=KasmVNC XFCE desktop on display :1 (browser, port 8444)
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=forking
+          User=jumpbox
+          WorkingDirectory=/home/jumpbox
+          # Clear stale locks from an unclean shutdown.
+          ExecStartPre=-/usr/bin/vncserver -kill :1
+          ExecStart=/usr/bin/vncserver :1 -select-de xfce
+          ExecStop=/usr/bin/vncserver -kill :1
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+      - path: /usr/local/sbin/jumpbox-setup.sh
+        permissions: "0755"
+        content: |
+          #!/bin/bash
+          # First-boot setup. Every step is independent: one failed download
+          # does not stop the rest. Summary goes to /etc/motd and the end of
+          # /var/log/jumpbox-setup.log.
+          #
+          # Safe to re-run:  sudo /usr/local/sbin/jumpbox-setup.sh
+          exec >>/var/log/jumpbox-setup.log 2>&1
+          set -u
+          export DEBIAN_FRONTEND=noninteractive
+          U=jumpbox
+          H=/home/$U
+          SUPERVISOR=172.17.10.2
+          ARGOCD=172.17.10.26
+          VCF_CLI_VERSION=v9.0.2
+          SUMMARY=""
+
+          step() {
+            local name=$1; shift
+            echo "=== $(date -Is) $name"
+            if "$@"; then SUMMARY+="OK    $name"$'\n'; else SUMMARY+="FAIL  $name"$'\n'; fi
+          }
+          gh_tag() { curl -fsSL "https://api.github.com/repos/$1/releases/latest" | jq -r .tag_name; }
+          bin() { install -m 0755 "$1" "/usr/local/bin/$2"; }
+
+          # --- one password for desktop, code-server and sudo -------------
+          install_password() {
+            if [ -s "$H/CREDENTIALS.txt" ]; then
+              PW=$(sed -n 's/^password: //p' "$H/CREDENTIALS.txt"); return 0
+            fi
+            PW=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)
+            echo "$U:$PW" | chpasswd &&
+            printf 'user: %s\npassword: %s\n' "$U" "$PW" > "$H/CREDENTIALS.txt" &&
+            chown $U:$U "$H/CREDENTIALS.txt" && chmod 600 "$H/CREDENTIALS.txt"
+          }
+
+          # --- OS packages ------------------------------------------------
+          install_base_packages() {
+            apt-get update &&
+            apt-get install -y \
+              ca-certificates curl wget gnupg jq git unzip zip bash-completion \
+              vim nano tmux htop tree \
+              dnsutils ldnsutils iputils-ping traceroute mtr-tiny tcpdump nmap \
+              netcat-openbsd iperf3 ethtool iproute2 socat whois openssl sshpass \
+              net-tools telnet \
+              xfce4 xfce4-goodies xfce4-terminal dbus-x11 ssl-cert \
+              fonts-dejavu fonts-liberation
+          }
+          install_desktop_tweaks() {
+            # No console login manager; the desktop is served by KasmVNC.
+            systemctl disable --now lightdm 2>/dev/null
+            # A screen locker inside a browser tab is only an annoyance.
+            apt-get remove -y light-locker xfce4-screensaver 2>/dev/null
+            return 0
+          }
+          install_kubectx() { apt-get install -y kubectx; }
+
+          # --- desktop apps -----------------------------------------------
+          install_docker() { curl -fsSL https://get.docker.com | sh && usermod -aG docker $U; }
+          install_chrome() {
+            wget -qO /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb &&
+            apt-get install -y /tmp/chrome.deb
+          }
+          install_vscode() {
+            wget -qO /tmp/code.deb 'https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64' &&
+            apt-get install -y /tmp/code.deb
+          }
+
+          # --- VCF / Kubernetes CLIs ----------------------------------------
+          # kubectl + kubectl-vsphere from the Supervisor itself: version-matched.
+          install_vsphere_plugin() {
+            curl -kfsSLo /tmp/vsphere-plugin.zip https://$SUPERVISOR/wcp/plugin/linux-amd64/vsphere-plugin.zip &&
+            unzip -o -q /tmp/vsphere-plugin.zip -d /tmp/vsphere-plugin &&
+            bin /tmp/vsphere-plugin/bin/kubectl kubectl &&
+            bin /tmp/vsphere-plugin/bin/kubectl-vsphere kubectl-vsphere
+          }
+          install_vcf_cli() {
+            curl -fsSL https://packages.broadcom.com/artifactory/vcf-distro/vcf-cli/linux/amd64/$VCF_CLI_VERSION/vcf-cli.tar.gz |
+              tar xz -C /tmp vcf-cli-linux_amd64 &&
+            bin /tmp/vcf-cli-linux_amd64 vcf
+          }
+          # argocd from our own ArgoCD server: matches its version.
+          install_argocd_cli() {
+            curl -kfsSLo /tmp/argocd https://$ARGOCD/download/argocd-linux-amd64 && bin /tmp/argocd argocd
+          }
+          install_k9s() {
+            wget -qO /tmp/k9s.deb https://github.com/derailed/k9s/releases/latest/download/k9s_linux_amd64.deb &&
+            apt-get install -y /tmp/k9s.deb
+          }
+          install_helm() { curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash; }
+          install_stern() {
+            local t; t=$(gh_tag stern/stern) &&
+            curl -fsSL "https://github.com/stern/stern/releases/download/$t/stern_${t#v}_linux_amd64.tar.gz" | tar xz -C /tmp stern &&
+            bin /tmp/stern stern
+          }
+          install_yq() {
+            curl -fsSLo /tmp/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && bin /tmp/yq yq
+          }
+          install_velero() {
+            local t; t=$(gh_tag vmware-tanzu/velero) &&
+            curl -fsSL "https://github.com/vmware-tanzu/velero/releases/download/$t/velero-$t-linux-amd64.tar.gz" | tar xz -C /tmp &&
+            bin "/tmp/velero-$t-linux-amd64/velero" velero
+          }
+          install_minio_mc() { curl -fsSLo /tmp/mc https://dl.min.io/client/mc/release/linux-amd64/mc && bin /tmp/mc mc; }
+          install_istioctl() {
+            local t; t=$(gh_tag istio/istio) &&
+            curl -fsSL "https://github.com/istio/istio/releases/download/$t/istioctl-$t-linux-amd64.tar.gz" | tar xz -C /tmp &&
+            bin /tmp/istioctl istioctl
+          }
+          install_govc() {
+            curl -fsSL https://github.com/vmware/govmomi/releases/latest/download/govc_Linux_x86_64.tar.gz | tar xz -C /tmp govc &&
+            bin /tmp/govc govc
+          }
+          install_completions() {
+            local c=/etc/bash_completion.d
+            for t in kubectl helm argocd stern k9s; do
+              command -v $t >/dev/null && $t completion bash > $c/$t 2>/dev/null
+            done
+            echo 'alias k=kubectl; complete -o default -F __start_kubectl k' > /etc/profile.d/k-alias.sh
+            return 0
+          }
+
+          # --- browser access ----------------------------------------------
+          # KasmVNC: the whole XFCE desktop in a browser tab, TLS on 8444
+          # (self-signed snakeoil cert). Service maps VIP:443 -> 8444.
+          install_kasmvnc() {
+            local t; t=$(gh_tag kasmtech/KasmVNC) &&
+            wget -qO /tmp/kasmvnc.deb "https://github.com/kasmtech/KasmVNC/releases/download/$t/kasmvncserver_noble_${t#v}_amd64.deb" &&
+            apt-get install -y /tmp/kasmvnc.deb &&
+            usermod -aG ssl-cert $U &&
+            install -d -o $U -g $U "$H/.vnc" &&
+            cat > "$H/.vnc/kasmvnc.yaml" <<'YAML' &&
+          network:
+            interface: 0.0.0.0
+            websocket_port: 8444
+            ssl:
+              require_ssl: true
+          desktop:
+            resolution:
+              width: 1920
+              height: 1080
+          YAML
+            chown $U:$U "$H/.vnc/kasmvnc.yaml" &&
+            printf '%s\n%s\n' "$PW" "$PW" | su - $U -c "kasmvncpasswd -u $U -wo" &&
+            systemctl daemon-reload && systemctl enable --now kasmvnc
+          }
+          # code-server: VS Code in a browser tab, TLS on 8443.
+          install_code_server() {
+            curl -fsSL https://code-server.dev/install.sh | sh &&
+            install -d -o $U -g $U "$H/.config" "$H/.config/code-server" &&
+            printf 'bind-addr: 0.0.0.0:8443\nauth: password\npassword: %s\ncert: true\n' "$PW" > "$H/.config/code-server/config.yaml" &&
+            chown $U:$U "$H/.config/code-server/config.yaml" && chmod 600 "$H/.config/code-server/config.yaml" &&
+            systemctl enable --now code-server@$U
+          }
+
+          step password         install_password
+          step base-packages    install_base_packages
+          step desktop-tweaks   install_desktop_tweaks
+          step kubectx          install_kubectx
+          step docker           install_docker
+          step chrome           install_chrome
+          step vscode           install_vscode
+          step kubectl+vsphere  install_vsphere_plugin
+          step vcf-cli          install_vcf_cli
+          step argocd           install_argocd_cli
+          step k9s              install_k9s
+          step helm             install_helm
+          step stern            install_stern
+          step yq               install_yq
+          step velero           install_velero
+          step mc               install_minio_mc
+          step istioctl         install_istioctl
+          step govc             install_govc
+          step completions      install_completions
+          step kasmvnc          install_kasmvnc
+          step code-server      install_code_server
+
+          {
+            echo "jumpbox setup, $(date -Is):"
+            printf '%s' "$SUMMARY"
+            echo "Credentials: ~/CREDENTIALS.txt   Log: /var/log/jumpbox-setup.log"
+          } | tee /etc/motd
+          touch /var/lib/jumpbox-setup.done
+
+    runcmd:
+      - [/usr/local/sbin/jumpbox-setup.sh]

@@ -1,0 +1,36 @@
+# External access to the jumpbox through an Avi VIP.
+#
+#   https://<VIP>/        KasmVNC -- full desktop in the browser
+#   https://<VIP>:8443/   code-server -- VS Code in the browser
+#   ssh jumpbox@<VIP>     SSH, key only
+#
+# The VIP:
+#   kubectl --context 172.17.10.2 -n se-ns-argo get svc jumpbox
+#
+# Both web ports use self-signed certificates: expect a browser warning.
+apiVersion: vmoperator.vmware.com/v1alpha5
+kind: VirtualMachineService
+metadata:
+  name: jumpbox
+  namespace: se-ns-argo
+spec:
+  type: LoadBalancer
+  selector:
+    app: jumpbox
+  # To restrict who can reach the VIP, list the source CIDRs here. Whether Avi
+  # enforces this on this Supervisor is not yet verified -- test it.
+  # loadBalancerSourceRanges:
+  # - 10.0.0.0/8
+  ports:
+  - name: kasmvnc
+    protocol: TCP
+    port: 443
+    targetPort: 8444
+  - name: code-server
+    protocol: TCP
+    port: 8443
+    targetPort: 8443
+  - name: ssh
+    protocol: TCP
+    port: 22
+    targetPort: 22

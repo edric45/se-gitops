@@ -1,0 +1,71 @@
+# Lets ArgoCD (in se-ns-argo) manage cluster lifecycle in se-namespace.
+#
+#   kubectl --context 172.17.10.2 apply -f bootstrap/15-argocd-rbac.yaml
+#
+# Namespace RBAC is normally vCenter-only on this Supervisor, so whether this
+# apply is accepted is the thing to watch. If it is rejected, the fallback is to
+# run ArgoCD inside se-namespace instead -- at the cost of ArgoCD dying with a
+# namespace teardown.
+#
+# NOTE THE MISSING VERB. This Role grants everything except `delete` on Cluster.
+#
+# That is the strongest guard rail available against the worst failure mode in
+# this design: ArgoCD pruning the Cluster CR. CAPI would cascade to the
+# KubeadmControlPlane, the MachineDeployment, the Machines and the VMs -- three
+# VMs gone, every PV deleted by CNS, and istio-system/cacerts (the one thing on
+# the cluster git cannot reproduce) with them. It would not be a rollback; it
+# would be a 25-minute rebuild with a new mesh trust root.
+#
+# ArgoCD-side settings (prune: false, Prune=false annotations, no finalizer) all
+# help, but every one of them is a line someone can change in a commit. This is
+# enforced by the API server and survives all of them. Deleting the cluster then
+# requires a human with their own credentials -- which is correct, because
+# tearing down a cluster should be a deliberate act, not a sync.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-cluster-lifecycle
+  namespace: se-namespace
+rules:
+# Cluster: everything except delete.
+- apiGroups: ["cluster.x-k8s.io"]
+  resources: ["clusters"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+# Read-only on what CAPI generates, so ArgoCD can assess health.
+- apiGroups: ["cluster.x-k8s.io"]
+  resources: ["machinedeployments", "machines", "machinesets"]
+  verbs: ["get", "list", "watch"]
+# Addons: full control including delete. Deleting an AddonInstall uninstalls the
+# addon (stopMatchingBehavior: Delete) which is recoverable -- unlike the above.
+- apiGroups: ["addons.kubernetes.vmware.com"]
+  resources: ["addonconfigs", "addoninstalls"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["addons.kubernetes.vmware.com"]
+  resources: ["clusteraddons", "addonreleases"]
+  verbs: ["get", "list", "watch"]
+# Needed for the MinIO Tenant if it lands in this namespace.
+- apiGroups: ["minio.min.io"]
+  resources: ["tenants"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# ArgoCD reads these to render and diff.
+- apiGroups: [""]
+  resources: ["secrets", "configmaps", "events"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-cluster-lifecycle
+  namespace: se-namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-cluster-lifecycle
+subjects:
+- kind: ServiceAccount
+  name: argocd-application-controller
+  namespace: se-ns-argo
+# The repo-server and server SAs do not need this -- only the application
+# controller applies manifests. argocd-server needs read access for the UI's
+# resource view; add it read-only later if the UI shows gaps.

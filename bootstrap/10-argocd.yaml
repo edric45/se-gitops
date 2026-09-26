@@ -1,0 +1,44 @@
+# The ArgoCD instance, in its own vSphere Namespace.
+#
+#   kubectl --context 172.17.10.2 apply -f bootstrap/10-argocd.yaml
+#
+# The operator (argocd-service 1.2.0, in svc-argocd-service-ix0im) is built into
+# the Supervisor -- it is NOT a separately installed SupervisorService, so there
+# is nothing to enable first. Applying this CR is the whole install.
+#
+# The namespace se-ns-argo must already exist, created in the vCenter UI.
+# Namespace Self-Service is not enabled here, so a manifest cannot create it.
+apiVersion: argocd-service.vsphere.vmware.com/v1alpha1
+kind: ArgoCD
+metadata:
+  name: argocd
+  namespace: se-ns-argo
+spec:
+  # PINNED DELIBERATELY, and this is not paranoia.
+  #
+  # The supported-versions list is mutable and the operator re-validates against
+  # it on every reconcile. `argocd-ks115` in this same lab was created on
+  # 2026-08-31 pinning 3.0.19+vmware.1-vks.1, which was valid then. The list
+  # moved on 2026-09-19 and that instance is now PHASE=Failed with
+  #   spec.version "3.0.19+vmware.1-vks.1" is not in the supported versions list
+  # while all five of its pods are still Running and its PackageInstall still
+  # reconciles. A healthy ArgoCD reporting Failed, purely on version policy.
+  #
+  # So: check the list before every upgrade, and expect this field to need a
+  # commit when it moves.
+  #   kubectl --context 172.17.10.2 get argocdversions argocd-supported-versions -o yaml
+  #
+  # As of 2026-09-26: 3.4.4 and 3.3.12 are "Recommended";
+  #                   3.2.12 and 3.1.16 are "For upgrade support only".
+  # Note the Broadcom docs still name 3.0.19 / 2.14.15 -- both are gone.
+  version: 3.4.4+vmware.1-vks.1
+
+  # Creates a LoadBalancer Service for argocd-server. The VIP comes from Avi via
+  # the Supervisor. Without this there is no way in from outside.
+  enableLoadBalancer: true
+
+  # Diff on the server via dry-run apply, so ArgoCD compares only the fields it
+  # actually manages. This matters specifically for the Cluster CR: the WCP
+  # mutating webhook injects a large set of topology variables we never author,
+  # and a client-side diff shows every one of them as drift forever.
+  serverSideDiff: true

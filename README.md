@@ -1,0 +1,123 @@
+# se-gitops
+
+The GitOps rebuild of the SE lab: ArgoCD on the vSphere Supervisor driving
+cluster lifecycle, addons and workloads from git.
+
+Separate from [`se-vks-platform`](../se-vks-platform), which is the imperative
+Makefile-era version and stays as the working reference for addon manifests,
+package value schemas and the Istio/pure-istio customer material.
+
+## Current state — 2026-09-26
+
+| | |
+|---|---|
+| Supervisor | `172.17.10.2` (`wkld01.vks.lab`) |
+| ArgoCD namespace | `se-ns-argo` — created in the vCenter UI |
+| ArgoCD instance | `phase: Ready`, `3.4.4+vmware.1-vks.1` |
+| ArgoCD UI | https://172.17.10.26 — user `admin` |
+| Cluster namespace | `se-namespace` — empty, bindings intact, ready for a cluster |
+| Workload cluster | **none.** `se-cluster-01` deleted 2026-09-25 to be rebuilt from git |
+
+Admin password:
+
+```sh
+kubectl --context 172.17.10.2 -n se-ns-argo get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+## The architecture
+
+One ArgoCD on the Supervisor, two destinations:
+
+```
+        GitHub  (source of truth; GitLab later)
+          |
+          v
+  ArgoCD in se-ns-argo  (Supervisor, vSphere Pods)
+          |
+          +--> in-cluster --> se-namespace
+          |                     Cluster CR, AddonConfig, AddonInstall
+          |
+          +--> se-cluster-01 (registered once it exists)
+                                workload namespaces and apps
+```
+
+ArgoCD deliberately lives in **its own** vSphere Namespace, not in
+`se-namespace`, so it survives `se-namespace`/`se-cluster-01` being destroyed
+and rebuilt — which is the whole point of the exercise.
+
+## Where git ownership starts, and why not earlier
+
+Namespace Self-Service is not enabled on this Supervisor. The vSphere Namespace
+itself, its storage-policy binding, VM-class binding, RBAC and resource-pool
+limits are **vCenter-only** and ArgoCD can never own them. So git ownership
+starts at the Cluster CR.
+
+`kubectl auth can-i` and `--dry-run=server` both *lie* about this — they report
+success and the real apply fails with
+`User is not authorized to create selfservice namespaces`.
+
+## Layout
+
+```
+bootstrap/     applied BY HAND. Everything that must exist before ArgoCD can
+               take over. See bootstrap/README.md for the order.
+```
+
+Still to come:
+
+```
+gitops/        AppProjects + the app-of-apps leaf        -> Supervisor, se-ns-argo
+supervisor/    Cluster CR, AddonConfig/AddonInstall      -> Supervisor, se-namespace
+clusters/      per-cluster platform + workload manifests -> the workload cluster
+```
+
+The top-level directory names the **API server**. That is the one thing to get
+right: `supervisor/` and `clusters/<name>/` go to different endpoints, and a
+manifest in the wrong tree either fails or does something surprising.
+
+## Open items
+
+- **ArgoCD's controller SA has no write access to `se-namespace`.** Verified:
+  `create clusters.cluster.x-k8s.io` → `no`. A sync targeting the Cluster CR
+  would fail forbidden. `bootstrap/15-argocd-rbac.yaml` addresses it but is
+  **not applied** — and the operator ships `ManagedEntity` /
+  `EntityManagementPolicy` CRDs which may be the supported route instead of
+  hand-rolled RBAC. Check those first.
+- **Health checks not wired.** ArgoCD assesses unknown CRDs as Healthy
+  immediately, so sync waves would fire the addon step while the cluster is
+  still cloning VMs. `bootstrap/20-healthchecks.yaml.todo` has the Lua; it needs
+  a live Cluster to confirm whether the condition is `Ready` or `Available`.
+- **`ignoreDifferences` for the Cluster CR not derived.** The live Cluster YAML
+  was not captured before the teardown (only table output, in
+  `se-vks-platform/docs/teardown-inventory-2026-09-25.md`). It will have to come
+  from observed drift after ArgoCD recreates the cluster.
+- **Velero + MinIO.** MinIO is already installed as a Supervisor Service
+  (`svc-minio-cly5e`, v2.0.10) and a `minio-vsan-sna-thick` StorageClass exists,
+  so the backup target may not need building. No `Tenant` exists yet.
+- **GitLab** deferred — no operator on this Supervisor, and it needs more
+  capacity than the old 2×4-vCPU worker pool had.
+
+## Things this lab has already taught us
+
+**Pin `spec.version`, and expect it to need commits.** The supported-versions
+list is mutable and revalidated every reconcile. `argocd-ks115` in `ks115-user`
+pinned `3.0.19` (valid on 2026-08-31); the list moved on 2026-09-19 and it now
+reports `PHASE: Failed` while all five pods run and its PackageInstall still
+reconciles fine. Broadcom's docs still name `3.0.19` and `2.14.15` — both gone.
+
+**There is no Supervisor Service to enable for ArgoCD.** The operator
+(`argocd-service` 1.2.0, `svc-argocd-service-ix0im`) is built into the
+Supervisor. `get supervisorservices` lists only MinIO. Applying the CR is the
+whole install.
+
+**Don't `delete addonconfig --all` in a cluster namespace.** `se-namespace` held
+11 AddonConfigs but only 3 AddonInstalls; the other 8 are driven by
+platform-owned AddonInstalls outside the namespace (`cni-addon-antrea-*`,
+`vcfops-prometheus-addoninstall`, `vault-injector-global-installer`,
+`builtin-helm-controller-addoninstall`, `vks-static-*-install`, `carvel-repo`,
+`depot`). A blanket delete takes out the CNI.
+
+**Two other ArgoCD namespaces exist and neither is ours** — `ks115-user` (the
+version-stranded one) and `argocd-instance-1` (74 days old, no ArgoCD object in
+it at all). Leave both alone.

@@ -1,0 +1,84 @@
+# NOT READY TO APPLY -- extension .todo so a stray `kubectl apply -f bootstrap/`
+# cannot pick it up. Rename to .yaml once the two VERIFY items below are settled.
+#
+# Why this file exists
+# --------------------
+# ArgoCD assesses an unknown CRD as Healthy the instant it exists. Cluster,
+# AddonConfig, AddonInstall and ClusterAddon are all unknown to it. So without
+# custom health checks, an app-of-apps with sync waves fires the addon wave
+# while the cluster is still cloning VMs, and the workload wave against an API
+# server that does not exist yet.
+#
+# `spec.resourceHealthChecks` is a first-class field on the ArgoCD CR
+# (array of {group, kind, check}), so this is declarative -- no patching
+# argocd-cm and losing it on the next operator reconcile.
+#
+# VERIFY BEFORE RENAMING (needs a live Cluster, which we just deleted):
+#   1. The actual condition type. CAPI v1beta1 uses Ready; v1beta2 uses
+#      Available. The ClusterClass here is builtin-generic-v3.7.0. Check:
+#        kubectl --context 172.17.10.2 -n se-namespace get cluster se-cluster-01 \
+#          -o jsonpath='{.status.phase}{"\n"}{range .status.conditions[*]}{.type}={.status}{"\n"}{end}'
+#      The pre-teardown listing showed an AVAILABLE column reading True, which
+#      points at v1beta2/Available -- but that was the printer column, not the
+#      condition, so confirm it properly.
+#   2. ClusterAddon's status shape:
+#        kubectl --context 172.17.10.2 -n se-namespace get clusteraddon -o yaml | grep -A12 'status:'
+#
+# Merge into 10-argocd.yaml under spec: rather than applying separately.
+---
+spec:
+  resourceHealthChecks:
+  - group: cluster.x-k8s.io
+    kind: Cluster
+    check: |
+      hs = {}
+      if obj.status == nil then
+        hs.status = "Progressing"
+        hs.message = "no status yet"
+        return hs
+      end
+      if obj.status.conditions ~= nil then
+        for _, c in ipairs(obj.status.conditions) do
+          -- accept either spelling so this survives a CAPI contract bump
+          if c.type == "Available" or c.type == "Ready" then
+            if c.status == "True" then
+              hs.status = "Healthy"
+              hs.message = obj.status.phase or c.type
+              return hs
+            end
+            if c.status == "False" then
+              hs.status = "Degraded"
+              hs.message = (c.reason or "") .. " " .. (c.message or "")
+              return hs
+            end
+          end
+        end
+      end
+      hs.status = "Progressing"
+      hs.message = obj.status.phase or "provisioning"
+      return hs
+
+  - group: addons.kubernetes.vmware.com
+    kind: ClusterAddon
+    check: |
+      hs = {}
+      if obj.status == nil or obj.status.conditions == nil then
+        hs.status = "Progressing"
+        hs.message = "no status yet"
+        return hs
+      end
+      for _, c in ipairs(obj.status.conditions) do
+        if c.type == "Ready" then
+          if c.status == "True" then
+            hs.status = "Healthy"; hs.message = "ready"; return hs
+          end
+          if c.status == "False" then
+            hs.status = "Degraded"
+            hs.message = (c.reason or "") .. " " .. (c.message or "")
+            return hs
+          end
+        end
+      end
+      hs.status = "Progressing"
+      hs.message = "reconciling"
+      return hs

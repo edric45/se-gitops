@@ -1,0 +1,56 @@
+# One ArgoCD Application per VKS add-on for se-cluster-01.
+#
+#   kubectl --context se-ns-argo apply -f gitops/applicationsets/
+#
+# Every folder under supervisor/se-ns-argo/se-cluster-01-addons/ becomes an
+# Application named se-cluster-01-<folder>, in project supervisor-wld,
+# deploying that folder to the Supervisor (se-ns-argo). VKS then installs the
+# add-on into the cluster.
+#
+#   add a folder, push     -> app created and synced automatically
+#   delete a folder, push  -> app deleted; the finalizer below deletes its
+#                             AddonInstall/AddonConfig, so VKS uninstalls it
+#
+# Needs spec.applicationSet.enabled: true in bootstrap/10-argocd.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: se-cluster-01-addons
+  namespace: se-ns-argo
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - git:
+      repoURL: https://github.com/edric45/se-gitops.git
+      revision: main
+      directories:
+      - path: supervisor/se-ns-argo/se-cluster-01-addons/*
+  template:
+    metadata:
+      name: 'se-cluster-01-{{ .path.basename }}'
+      # Without this, deleting a generated app would leave its add-on
+      # objects behind (and the add-on installed).
+      finalizers:
+      - resources-finalizer.argocd.argoproj.io
+      labels:
+        cluster: se-cluster-01
+        kind: vks-addon
+    spec:
+      project: supervisor-wld
+      source:
+        repoURL: https://github.com/edric45/se-gitops.git
+        targetRevision: main
+        path: '{{ .path.path }}'
+      destination:
+        name: supervisor-se-ns-argo
+        namespace: se-ns-argo
+      # Add-ons sync automatically: they are low-risk (an AddonInstall can be
+      # removed and re-added) and this is what makes "add a folder" enough.
+      # The Cluster CR app stays manual.
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - ServerSideApply=true

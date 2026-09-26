@@ -71,11 +71,12 @@ success and the real apply fails with
 ```
 bootstrap/     applied BY HAND. Everything that must exist before ArgoCD can
                take over. See bootstrap/README.md for the order.
-gitops/        projects/: AppProjects, applied by hand   -> Supervisor, se-ns-argo
-                 supervisor-wld  -> apps deploying to the Supervisor
-                 se-cluster-01   -> apps deploying into the workload cluster
+gitops/        applied by hand                           -> Supervisor, se-ns-argo
+                 projects/supervisor-wld  -> apps deploying to the Supervisor
+                 projects/se-cluster-01   -> apps deploying into the workload cluster
+                 applicationsets/se-cluster-01-addons -> one app per add-on folder
 supervisor/    Cluster CR, AddonConfig/AddonInstall      -> Supervisor, se-ns-argo
-               + se-cluster-01-addons/: VKS add-ons (cert-manager, ...)
+               + se-cluster-01-addons/<addon>/: VKS add-ons, one folder each
                + se-jumpbox/: browser-accessible debug desktop VM
 ```
 

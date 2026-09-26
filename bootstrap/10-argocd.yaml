@@ -42,3 +42,9 @@ spec:
   # mutating webhook injects a large set of topology variables we never author,
   # and a client-side diff shows every one of them as drift forever.
   serverSideDiff: true
+
+  # ApplicationSets: templates that generate Applications -- e.g. one app per
+  # add-on folder under supervisor/se-ns-argo/se-cluster-01-addons/. The CRD
+  # ships with the service; this deploys argocd-applicationset-controller.
+  applicationSet:
+    enabled: true

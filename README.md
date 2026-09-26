@@ -15,8 +15,9 @@ package value schemas and the Istio/pure-istio customer material.
 | ArgoCD namespace | `se-ns-argo` — created in the vCenter UI |
 | ArgoCD instance | `phase: Ready`, `3.4.4+vmware.1-vks.1` |
 | ArgoCD UI | https://172.17.10.26 — user `admin` |
-| Cluster namespace | `se-namespace` — empty, bindings intact, ready for a cluster |
-| Workload cluster | **none.** `se-cluster-01` deleted 2026-09-25 to be rebuilt from git |
+| Cluster namespace | `se-ns-argo` too — everything lives in one vSphere Namespace |
+| Workload cluster | **none.** `se-cluster-01` deleted 2026-09-25 to be rebuilt from git; manifest in `supervisor/se-ns-argo/se-cluster-01/` |
+| `se-namespace` | the old cluster namespace — empty, no longer used |
 
 The admin password was changed from the initial one on 2026-09-26, so
 `argocd-initial-admin-secret` no longer holds it.
@@ -34,16 +35,25 @@ One ArgoCD on the Supervisor, two destinations:
           v
   ArgoCD in se-ns-argo  (Supervisor, vSphere Pods)
           |
-          +--> in-cluster --> se-namespace
-          |                     Cluster CR, AddonConfig, AddonInstall
+          +--> supervisor-se-ns-argo --> se-ns-argo
+          |                               Cluster CR, AddonConfig, AddonInstall
           |
           +--> se-cluster-01 (registered once it exists)
                                 workload namespaces and apps
 ```
 
-ArgoCD deliberately lives in **its own** vSphere Namespace, not in
-`se-namespace`, so it survives `se-namespace`/`se-cluster-01` being destroyed
-and rebuilt — which is the whole point of the exercise.
+ArgoCD and the Cluster CR share `se-ns-argo`, so one namespace-scoped
+registration covers both. Deleting and rebuilding `se-cluster-01` does not touch
+the namespace, so ArgoCD survives it — which is the whole point of the exercise.
+
+What sharing costs:
+
+- ArgoCD's pods and the cluster's VMs draw from the **same** namespace resource
+  pool. No quota is set today; if one is added, size it for both.
+- `argocd-manager` holds `edit` in `se-ns-argo`, which **includes deleting the
+  Cluster**. The only guard is the `Prune=false,Delete=false` sync-option
+  annotation on the Cluster CR — keep it.
+- Never tear down `se-ns-argo` to reset the cluster. Delete the Cluster CR.
 
 ## Where git ownership starts, and why not earlier
 
@@ -61,13 +71,13 @@ success and the real apply fails with
 ```
 bootstrap/     applied BY HAND. Everything that must exist before ArgoCD can
                take over. See bootstrap/README.md for the order.
+supervisor/    Cluster CR, AddonConfig/AddonInstall      -> Supervisor, se-ns-argo
 ```
 
 Still to come:
 
 ```
 gitops/        AppProjects + the app-of-apps leaf        -> Supervisor, se-ns-argo
-supervisor/    Cluster CR, AddonConfig/AddonInstall      -> Supervisor, se-namespace
 clusters/      per-cluster platform + workload manifests -> the workload cluster
 ```
 
@@ -77,9 +87,6 @@ manifest in the wrong tree either fails or does something surprising.
 
 ## Open items
 
-- **Access to `se-namespace`** is expected to come with registering it as an
-  ArgoCD destination — no hand-rolled RoleBinding. Nothing has been applied
-  for it yet.
 - **Health checks not wired.** ArgoCD assesses unknown CRDs as Healthy
   immediately, so sync waves would fire the addon step while the cluster is
   still cloning VMs. `bootstrap/20-healthchecks.yaml.todo` has the Lua; it needs

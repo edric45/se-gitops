@@ -30,8 +30,13 @@ argocd cluster add se-ns-argo \
   --system-namespace se-ns-argo \
   --yes
 
-# 4. Verify. STATUS reads Unknown until an Application targets the cluster.
+# 4. Add this repo. It is public, so no credentials. This is also the first
+#    test that the repo-server (on the Supervisor) can reach github.com.
+argocd repo add https://github.com/edric45/se-gitops.git
+
+# 5. Verify. Cluster STATUS reads Unknown until an Application targets it.
 argocd cluster list
+argocd repo list
 kubectl --context se-ns-argo auth can-i create deployments -n se-ns-argo \
   --as=system:serviceaccount:se-ns-argo:argocd-manager    # yes
 kubectl --context se-ns-argo auth can-i create deployments -n se-namespace \

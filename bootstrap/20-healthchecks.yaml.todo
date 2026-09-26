@@ -16,13 +16,13 @@
 # VERIFY BEFORE RENAMING (needs a live Cluster, which we just deleted):
 #   1. The actual condition type. CAPI v1beta1 uses Ready; v1beta2 uses
 #      Available. The ClusterClass here is builtin-generic-v3.7.0. Check:
-#        kubectl --context 172.17.10.2 -n se-namespace get cluster se-cluster-01 \
+#        kubectl --context 172.17.10.2 -n se-ns-argo get cluster se-cluster-01 \
 #          -o jsonpath='{.status.phase}{"\n"}{range .status.conditions[*]}{.type}={.status}{"\n"}{end}'
 #      The pre-teardown listing showed an AVAILABLE column reading True, which
 #      points at v1beta2/Available -- but that was the printer column, not the
 #      condition, so confirm it properly.
 #   2. ClusterAddon's status shape:
-#        kubectl --context 172.17.10.2 -n se-namespace get clusteraddon -o yaml | grep -A12 'status:'
+#        kubectl --context 172.17.10.2 -n se-ns-argo get clusteraddon -o yaml | grep -A12 'status:'
 #
 # Merge into 10-argocd.yaml under spec: rather than applying separately.
 ---

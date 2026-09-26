@@ -1,0 +1,111 @@
+# Cluster: se-cluster-01 -- the rebuild, from git.
+#
+#   control plane  1 x best-effort-medium  (2 vCPU / 8Gi)
+#   node-pool      2 x best-effort-large   (4 vCPU / 16Gi)
+#
+#   separate disks  control plane: etcd (via etcdConfiguration), containerd,
+#                                  kubelet
+#                   workers:       containerd, kubelet
+#
+# classRef and version are what the previous se-cluster-01 ran on (see
+# se-vks-platform/docs/teardown-inventory-2026-09-25.md). v1.36.2 is also
+# offered; moving to it is a separate, deliberate commit.
+#
+# Lives in se-ns-argo, alongside ArgoCD, so the single se-ns-argo registration
+# (supervisor-se-ns-argo) covers it.
+#
+# vmClass and storageClass MUST already be bound to se-ns-argo in vCenter:
+#   kubectl --context 172.17.10.2 -n se-ns-argo get virtualmachineclass
+#   kubectl --context 172.17.10.2 -n se-ns-argo get storagepolicyquotas
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: se-cluster-01
+  namespace: se-ns-argo
+  annotations:
+    # Never let a sync or an Application delete remove this object. Deleting a
+    # Cluster cascades to every VM and every PV on it. Tearing it down should be
+    # a human with kubectl, not a side effect of git.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  # Required. The Supervisor rejects a Cluster without clusterNetwork.services:
+  #   "spec.ClusterNetwork.Services must be defined"
+  clusterNetwork:
+    services:
+      cidrBlocks:
+      - 10.96.0.0/12
+    pods:
+      cidrBlocks:
+      - 192.168.156.0/20
+    serviceDomain: cluster.local
+  topology:
+    classRef:
+      name: builtin-generic-v3.7.0
+      namespace: vmware-system-vks-public
+    version: v1.35.6+vmware.2
+
+    # Cluster-level defaults. vmClass and storageClass are required here even
+    # though both scopes below override vmClass.
+    #
+    # Scope note: an override REPLACES the cluster-level value, it does not
+    # merge -- so each scope carries its full volumes list, and there is
+    # deliberately no cluster-level `volumes`.
+    variables:
+    - name: vmClass
+      value: best-effort-medium
+    - name: storageClass
+      value: vsan-default-storage-policy
+
+    controlPlane:
+      replicas: 1
+      variables:
+        overrides:
+        - name: vmClass
+          value: best-effort-medium
+        # etcd gets its own disk through THIS, not through `volumes`. The
+        # ClusterClass provisions a dedicated volume at /var/lib/etcd sized
+        # maximumDBSizeGiB + 25% (compaction/defrag headroom) AND sets etcd's
+        # --quota-backend-bytes to match, so disk and quota cannot drift apart.
+        # A hand-written /var/lib/etcd entry in `volumes` gets the disk but not
+        # the quota -- the Supervisor warns about exactly that.
+        #
+        # Range 2-8. It can only ever be RAISED -- the schema rejects a
+        # decrease -- so start modest. etcd's own default quota is 2Gi.
+        - name: kubernetes
+          value:
+            etcdConfiguration:
+              maximumDBSizeGiB: 4
+        # Separate disks so a runaway image cache or emptyDir fills its own
+        # disk, not the root disk.
+        - name: volumes
+          value:
+          - name: containerd
+            mountPath: /var/lib/containerd
+            capacity: 25Gi
+            storageClass: vsan-default-storage-policy
+          - name: kubelet
+            mountPath: /var/lib/kubelet
+            capacity: 25Gi
+            storageClass: vsan-default-storage-policy
+
+    workers:
+      machineDeployments:
+      - class: node-pool
+        name: se-cluster-01-np01
+        replicas: 2
+        variables:
+          overrides:
+          - name: vmClass
+            value: best-effort-large
+          # No etcd on workers. containerd holds image layers; kubelet holds
+          # emptyDir volumes and pod ephemeral state.
+          - name: volumes
+            value:
+            - name: containerd
+              mountPath: /var/lib/containerd
+              capacity: 50Gi
+              storageClass: vsan-default-storage-policy
+            - name: kubelet
+              mountPath: /var/lib/kubelet
+              capacity: 50Gi
+              storageClass: vsan-default-storage-policy

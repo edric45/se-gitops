@@ -24,13 +24,14 @@ they report success and the real apply then fails with
 
 Create the vSphere Namespace for ArgoCD. Here: **`se-ns-argo`**.
 
-It needs a **storage policy** bound, because the ArgoCD instance runs as vSphere
-Pods. It does *not* need a VM class unless you will also provision clusters from
-this namespace — we won't; clusters live in `se-namespace`.
+It needs a **storage policy** bound (ArgoCD runs as vSphere Pods, and cluster
+nodes need it for their disks) and **VM classes** bound, because the workload
+clusters live here too. Currently bound: `vsan-default-storage-policy` and
+`best-effort-{xsmall,small,medium,large,xlarge}`.
 
-ArgoCD gets its own namespace on purpose: it has to outlive
-`se-namespace`/`se-cluster-01` being destroyed and rebuilt, which is the whole
-point of the exercise.
+ArgoCD and the clusters share this namespace so one namespace-scoped
+registration covers both. Deleting a Cluster CR does not touch the namespace, so
+ArgoCD outlives `se-cluster-01` being destroyed and rebuilt.
 
 Verify:
 
@@ -74,7 +75,9 @@ kubectl --context 172.17.10.2 -n se-ns-argo get secret | grep -i admin
 
 Registers `https://172.17.10.2:443` as `supervisor-se-ns-argo`, scoped to
 `se-ns-argo` only. Creates the `argocd-manager` SA, its token Secret and an
-`edit` RoleBinding in `se-ns-argo`.
+`edit` RoleBinding in `se-ns-argo`. Then adds
+`https://github.com/edric45/se-gitops.git` as a repository (public, no
+credentials).
 
 ## Version pinning is not optional here
 
@@ -103,7 +106,7 @@ ArgoCD object in it at all. Neither of these is ours — don't touch either.
 | File | |
 |---|---|
 | `10-argocd.yaml` | the ArgoCD instance in `se-ns-argo`, pinned to 3.4.4 |
-| `15-register-supervisor.sh` | kube context, `argocd login`, `argocd cluster add` for the Supervisor |
+| `15-register-supervisor.sh` | kube context, `argocd login`, `argocd cluster add` for the Supervisor, `argocd repo add` for this repo |
 | `20-healthchecks.yaml.todo` | custom Lua health checks for `Cluster` / `ClusterAddon`. **Not ready** — needs a live Cluster to verify the condition types. Merge into `10-argocd.yaml` when it is. |
 | `20-root-app.yaml` | not written yet — the one `kubectl apply` that hands over to git |
 
@@ -117,7 +120,7 @@ been derived from. It will instead have to be derived by observing drift after
 ArgoCD recreates the cluster:
 
 ```sh
-kubectl -n se-namespace get cluster se-cluster-01 \
+kubectl -n se-ns-argo get cluster se-cluster-01 \
   -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\n"}{end}'
 argocd app diff cluster-se-cluster-01
 ```

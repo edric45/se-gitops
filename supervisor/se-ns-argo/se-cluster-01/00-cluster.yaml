@@ -62,6 +62,19 @@ spec:
       value: best-effort-medium
     - name: storageClass
       value: vsan-default-storage-policy
+    # Marks this StorageClass as the default INSIDE the cluster (VKS adds the
+    # storageclass.kubernetes.io/is-default-class annotation when it syncs
+    # storage classes into the guest). Without it the cluster has no default
+    # and every PVC must name a class. vsphereOptions has no default of its
+    # own, so setting only this field wipes nothing.
+    #
+    # The ClusterClass marks vsphereOptions as "changes require a machine
+    # rollout" (persistentVolumes itself is not marked) -- expect the nodes
+    # may be replaced when this is first synced.
+    - name: vsphereOptions
+      value:
+        persistentVolumes:
+          defaultStorageClass: vsan-default-storage-policy
 
     controlPlane:
       replicas: 1

@@ -1,0 +1,23 @@
+# AppProject for everything that deploys to the SUPERVISOR (se-ns-argo):
+# the Cluster CR, the jumpbox, and later AddonConfig/AddonInstall.
+#
+#   kubectl --context se-ns-argo apply -f gitops/projects/
+#
+# Created in the ArgoCD UI on 2026-09-26; this file is its record.
+#
+# No clusterResourceWhitelist on purpose: apps here create only namespaced
+# objects in se-ns-argo, and the supervisor-se-ns-argo registration could not
+# create cluster-scoped ones anyway (it is scoped to that one namespace).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: supervisor-wld
+  namespace: se-ns-argo
+spec:
+  description: supervisor cluster for workload management
+  sourceRepos:
+  - https://github.com/edric45/se-gitops.git
+  destinations:
+  - name: "*"
+    namespace: "*"
+    server: https://172.17.10.2:443

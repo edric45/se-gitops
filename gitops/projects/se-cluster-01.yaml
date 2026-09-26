@@ -1,0 +1,28 @@
+# AppProject for everything that deploys INTO the workload cluster
+# se-cluster-01 (https://172.17.10.23:6443).
+#
+#   kubectl --context se-ns-argo apply -f gitops/projects/
+#
+# Created in the ArgoCD UI on 2026-09-26; this file is its record, plus the
+# clusterResourceWhitelist below.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: se-cluster-01
+  namespace: se-ns-argo
+spec:
+  description: se workload cluster
+  sourceRepos:
+  - https://github.com/edric45/se-gitops.git
+  destinations:
+  - name: "*"
+    namespace: "*"
+    server: https://172.17.10.23:6443
+  # Outside the `default` project, ArgoCD DENIES every cluster-scoped kind
+  # unless it is listed here. Without this, any app that creates a Namespace
+  # (incl. CreateNamespace=true), a CRD, a ClusterRole/Binding or a
+  # StorageClass fails with "not permitted in project" -- i.e. nearly every
+  # Helm chart. This is our own cluster, so allow all.
+  clusterResourceWhitelist:
+  - group: "*"
+    kind: "*"

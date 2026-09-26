@@ -18,12 +18,11 @@ package value schemas and the Istio/pure-istio customer material.
 | Cluster namespace | `se-namespace` — empty, bindings intact, ready for a cluster |
 | Workload cluster | **none.** `se-cluster-01` deleted 2026-09-25 to be rebuilt from git |
 
-Admin password:
+The admin password was changed from the initial one on 2026-09-26, so
+`argocd-initial-admin-secret` no longer holds it.
 
-```sh
-kubectl --context 172.17.10.2 -n se-ns-argo get secret argocd-initial-admin-secret \
-  -o jsonpath='{.data.password}' | base64 -d; echo
-```
+Registered clusters: `supervisor-se-ns-argo` → `https://172.17.10.2:443`,
+scoped to `se-ns-argo` (see `bootstrap/15-register-supervisor.sh`).
 
 ## The architecture
 
@@ -78,12 +77,9 @@ manifest in the wrong tree either fails or does something surprising.
 
 ## Open items
 
-- **ArgoCD's controller SA has no write access to `se-namespace`.** Verified:
-  `create clusters.cluster.x-k8s.io` → `no`. A sync targeting the Cluster CR
-  would fail forbidden. `bootstrap/15-argocd-rbac.yaml` addresses it but is
-  **not applied** — and the operator ships `ManagedEntity` /
-  `EntityManagementPolicy` CRDs which may be the supported route instead of
-  hand-rolled RBAC. Check those first.
+- **Access to `se-namespace`** is expected to come with registering it as an
+  ArgoCD destination — no hand-rolled RoleBinding. Nothing has been applied
+  for it yet.
 - **Health checks not wired.** ArgoCD assesses unknown CRDs as Healthy
   immediately, so sync waves would fire the addon step while the cluster is
   still cloning VMs. `bootstrap/20-healthchecks.yaml.todo` has the Lua; it needs

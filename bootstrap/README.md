@@ -66,22 +66,15 @@ kubectl --context 172.17.10.2 -n se-ns-argo get svc argocd-server
 kubectl --context 172.17.10.2 -n se-ns-argo get secret | grep -i admin
 ```
 
-### 2. Cross-namespace RBAC — the open question
-
-ArgoCD lives in `se-ns-argo` and must write `Cluster` and `AddonConfig`/
-`AddonInstall` objects into `se-namespace`. That needs a RoleBinding in
-`se-namespace` — and namespace RBAC is on the vCenter-only list above.
-
-Settle it with a **real apply**, not a dry run:
+### 2. Register the Supervisor with ArgoCD
 
 ```sh
-kubectl --context 172.17.10.2 -n se-namespace create rolebinding argocd-writer \
-  --clusterrole=edit \
-  --serviceaccount=se-ns-argo:argocd-application-controller
+./bootstrap/15-register-supervisor.sh
 ```
 
-If that is rejected, the fallback is to run ArgoCD in `se-namespace` itself —
-fewer unknowns, but then a namespace-level teardown takes ArgoCD with it.
+Registers `https://172.17.10.2:443` as `supervisor-se-ns-argo`, scoped to
+`se-ns-argo` only. Creates the `argocd-manager` SA, its token Secret and an
+`edit` RoleBinding in `se-ns-argo`.
 
 ## Version pinning is not optional here
 
@@ -110,6 +103,7 @@ ArgoCD object in it at all. Neither of these is ours — don't touch either.
 | File | |
 |---|---|
 | `10-argocd.yaml` | the ArgoCD instance in `se-ns-argo`, pinned to 3.4.4 |
+| `15-register-supervisor.sh` | kube context, `argocd login`, `argocd cluster add` for the Supervisor |
 | `20-healthchecks.yaml.todo` | custom Lua health checks for `Cluster` / `ClusterAddon`. **Not ready** — needs a live Cluster to verify the condition types. Merge into `10-argocd.yaml` when it is. |
 | `20-root-app.yaml` | not written yet — the one `kubectl apply` that hands over to git |
 

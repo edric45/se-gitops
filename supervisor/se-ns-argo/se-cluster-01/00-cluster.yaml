@@ -3,13 +3,12 @@
 #   control plane  1 x best-effort-medium  (2 vCPU / 8Gi)
 #   node-pool      2 x best-effort-large   (4 vCPU / 16Gi)
 #
-#   separate disks  control plane: containerd, kubelet
+#   separate disks  control plane: etcd only (via etcdConfiguration)
 #                   workers:       containerd, kubelet
 #
-# kubernetes.etcdConfiguration (dedicated etcd disk + quota) was removed on
-# 2026-09-26: the first build with it stalled before cloud-init created
-# vmware-system-user. Not yet proven to be the cause -- `volumes` is the other
-# suspect. No other cluster on this Supervisor uses either.
+# History, 2026-09-26: builds with containerd + kubelet `volumes` on the
+# control plane stalled before cloud-init created vmware-system-user. Removed
+# them; the control plane runs only static pods, so they bought little there.
 #
 # classRef and version are what the previous se-cluster-01 ran on (see
 # se-vks-platform/docs/teardown-inventory-2026-09-25.md). v1.36.2 is also
@@ -52,8 +51,8 @@ spec:
     # though both scopes below override vmClass.
     #
     # Scope note: an override REPLACES the cluster-level value, it does not
-    # merge -- so each scope carries its full volumes list, and there is
-    # deliberately no cluster-level `volumes`.
+    # merge. There is deliberately no cluster-level `volumes`, so only the
+    # scope that overrides it (workers) gets extra disks.
     variables:
     - name: vmClass
       value: best-effort-medium
@@ -66,18 +65,19 @@ spec:
         overrides:
         - name: vmClass
           value: best-effort-medium
-        # Separate disks so a runaway image cache or emptyDir fills its own
-        # disk, not the root disk.
-        - name: volumes
+        # etcd gets its own disk through THIS, not through `volumes`. The
+        # ClusterClass provisions a dedicated volume at /var/lib/etcd sized
+        # maximumDBSizeGiB + 25% (compaction/defrag headroom) AND sets etcd's
+        # --quota-backend-bytes to match.
+        #
+        # Range 2-8. It can only ever be RAISED -- the schema rejects a
+        # decrease -- so start modest. etcd's own default quota is 2Gi.
+        - name: kubernetes
           value:
-          - name: containerd
-            mountPath: /var/lib/containerd
-            capacity: 25Gi
-            storageClass: vsan-default-storage-policy
-          - name: kubelet
-            mountPath: /var/lib/kubelet
-            capacity: 25Gi
-            storageClass: vsan-default-storage-policy
+            etcdConfiguration:
+              maximumDBSizeGiB: 4
+        # No `volumes` override on the control plane: there is no cluster-level
+        # `volumes`, so it gets none.
 
     workers:
       machineDeployments:

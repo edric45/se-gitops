@@ -41,7 +41,11 @@ stringData:
         # Locked until the setup script sets the generated password.
         lock_passwd: true
         ssh_authorized_keys:
+          # The key you use to log in TO the workstation (private half is on
+          # your laptop).
           - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJq8nI9cVIYWM7KEegRXx5t1ewp/YdXA+hX6JfAxxh8r ss902385@broadcom.net
+          # The workstation's own key (~/.ssh/id_ed25519 there).
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOAGkHwZ3oyh3S2BVwgd4XUE1bJ3/oh6BoIhvaEjdXrz ss902385@se-workstation
     ssh_pwauth: false
 
     write_files:

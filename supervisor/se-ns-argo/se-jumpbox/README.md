@@ -55,7 +55,8 @@ ssh jumpbox@<VIP> cat /etc/motd                                    # what instal
 One generated password covers the KasmVNC login, code-server and `sudo`. It
 is created on the VM at first boot, never in git — this repo is public.
 
-The SSH key in `00-cloud-init.yaml` is `ss902385@broadcom.net`. Change it
+The SSH keys in `00-cloud-init.yaml` are `ss902385@broadcom.net` (your
+laptop) and `ss902385@se-workstation` (the workstation). Change them
 there **before** the first sync; cloud-init only reads it once.
 
 Both web ports use self-signed certificates.

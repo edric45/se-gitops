@@ -1,0 +1,18 @@
+# se-jumpbox data disk, mounted at /data: Docker images and containers
+# (/data/docker) and ~/work. Separate from the VM so it survives the VM being
+# deleted and recreated -- cloud-init formats it only if it is empty.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: se-jumpbox-data
+  namespace: se-ns-argo
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: vsan-default-storage-policy
+  resources:
+    requests:
+      storage: 100Gi

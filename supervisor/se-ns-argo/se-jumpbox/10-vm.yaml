@@ -1,4 +1,4 @@
-# Jumpbox VM: Ubuntu 24.04 desktop reachable from a browser.
+# se-jumpbox VM: Ubuntu 24.04 desktop reachable from a browser.
 #
 # A VM rather than a vSphere Pod: vSphere Pods cannot run privileged
 # containers (so no Docker daemon), have no persistent root disk, and make a
@@ -8,17 +8,23 @@
 # Image: noble-server-cloudimg-amd64-2 from the vm-images content library,
 # which must stay associated with se-ns-argo in vCenter.
 #   kubectl --context 172.17.10.2 -n se-ns-argo get virtualmachineimages
+#
+# DISKS -- do NOT set spec.advanced.bootDiskCapacity. VM Service deploys the
+# image's 10Gi disk as a linked clone, and vSphere refuses to grow a disk with
+# a parent ("Invalid operation for device '0'. Disks with parents cannot be
+# expanded"). Disk promotion cannot rescue it: Online promotion waits for
+# power-on, and power-on waits for the resize. So the root disk stays at 10Gi
+# (OS and apps) and the space is a separate PVC mounted at /data.
 apiVersion: vmoperator.vmware.com/v1alpha5
 kind: VirtualMachine
 metadata:
-  name: jumpbox
+  name: se-jumpbox
   namespace: se-ns-argo
   labels:
-    app: jumpbox
+    app: se-jumpbox
   annotations:
-    # After the cloud-init Secret.
+    # After the cloud-init Secret and the data PVC.
     argocd.argoproj.io/sync-wave: "1"
-    # Your work lives on this disk. Deleting it should be deliberate.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   className: best-effort-xlarge          # 4 vCPU / 32Gi: Chrome + VS Code + Docker
@@ -27,10 +33,12 @@ spec:
     name: vmi-c1367c56a439b43c5          # noble-server-cloudimg-amd64-2
   storageClass: vsan-default-storage-policy
   powerState: PoweredOn
-  advanced:
-    bootDiskCapacity: 100Gi
   bootstrap:
     cloudInit:
       rawCloudConfig:
-        name: jumpbox-cloud-init
+        name: se-jumpbox-cloud-init
         key: user-data
+  volumes:
+  - name: data                           # /dev/sdb in the guest -> /data
+    persistentVolumeClaim:
+      claimName: se-jumpbox-data

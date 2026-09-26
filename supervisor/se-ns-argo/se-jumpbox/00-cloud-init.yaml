@@ -1,4 +1,4 @@
-# First-boot configuration for the jumpbox VM.
+# First-boot configuration for the se-jumpbox VM.
 #
 # This Secret holds NO secrets -- only the cloud-config, which is public in
 # this repo anyway. The one real credential (the desktop/code-server/sudo
@@ -10,7 +10,7 @@
 apiVersion: v1
 kind: Secret
 metadata:
-  name: jumpbox-cloud-init
+  name: se-jumpbox-cloud-init
   namespace: se-ns-argo
   annotations:
     argocd.argoproj.io/sync-wave: "0"
@@ -18,7 +18,19 @@ type: Opaque
 stringData:
   user-data: |
     #cloud-config
-    hostname: jumpbox
+    hostname: se-jumpbox
+
+    # The data PVC (10-vm.yaml) is the second disk. Filesystem straight on the
+    # device, formatted only if it has none -- so a recreated VM reattaching
+    # the same PVC keeps its data. nofail: boot even if the disk is missing.
+    fs_setup:
+      - label: jumpbox-data
+        filesystem: ext4
+        device: /dev/sdb
+        partition: none
+        overwrite: false
+    mounts:
+      - [LABEL=jumpbox-data, /data, ext4, "defaults,nofail", "0", "2"]
 
     users:
       - name: jumpbox
@@ -33,6 +45,13 @@ stringData:
     ssh_pwauth: false
 
     write_files:
+      # Docker images and containers on the data disk, not the 10Gi root.
+      # Written before Docker is installed, so it starts there.
+      - path: /etc/docker/daemon.json
+        permissions: "0644"
+        content: |
+          {"data-root": "/data/docker"}
+
       - path: /etc/systemd/system/kasmvnc.service
         permissions: "0644"
         content: |
@@ -212,6 +231,20 @@ stringData:
             systemctl enable --now code-server@$U
           }
 
+          # --- data disk (fs_setup/mounts above do the format and mount) ---
+          check_data_disk() {
+            mountpoint -q /data || { echo "/data is NOT mounted -- Docker and ~/work would fill the 10Gi root"; return 1; }
+            install -d -o $U -g $U /data/work &&
+            ln -sfn /data/work "$H/work" && chown -h $U:$U "$H/work"
+          }
+          # Keep the 10Gi root lean.
+          cleanup() {
+            apt-get clean
+            rm -rf /tmp/*.deb /tmp/vsphere-plugin* /tmp/velero-* /tmp/istioctl /tmp/govc /tmp/stern /tmp/yq /tmp/mc /tmp/argocd /tmp/vcf-cli-linux_amd64
+            return 0
+          }
+
+          step data-disk        check_data_disk
           step password         install_password
           step base-packages    install_base_packages
           step desktop-tweaks   install_desktop_tweaks
@@ -233,11 +266,14 @@ stringData:
           step completions      install_completions
           step kasmvnc          install_kasmvnc
           step code-server      install_code_server
+          step cleanup          cleanup
 
           {
-            echo "jumpbox setup, $(date -Is):"
+            echo "se-jumpbox setup, $(date -Is):"
             printf '%s' "$SUMMARY"
+            df -h / /data | sed 's/^/  /'
             echo "Credentials: ~/CREDENTIALS.txt   Log: /var/log/jumpbox-setup.log"
+            echo "Put your work in ~/work (on /data) -- the root disk is only 10Gi."
           } | tee /etc/motd
           touch /var/lib/jumpbox-setup.done
 

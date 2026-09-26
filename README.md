@@ -72,7 +72,7 @@ success and the real apply fails with
 bootstrap/     applied BY HAND. Everything that must exist before ArgoCD can
                take over. See bootstrap/README.md for the order.
 supervisor/    Cluster CR, AddonConfig/AddonInstall      -> Supervisor, se-ns-argo
-               + jumpbox/: browser-accessible debug desktop VM
+               + se-jumpbox/: browser-accessible debug desktop VM
 ```
 
 Still to come:

@@ -3,12 +3,14 @@
 #   control plane  1 x best-effort-medium  (2 vCPU / 8Gi)
 #   node-pool      2 x best-effort-large   (4 vCPU / 16Gi)
 #
-#   separate disks  control plane: etcd only (via etcdConfiguration)
+#   separate disks  control plane: none
 #                   workers:       containerd, kubelet
 #
-# History, 2026-09-26: builds with containerd + kubelet `volumes` on the
-# control plane stalled before cloud-init created vmware-system-user. Removed
-# them; the control plane runs only static pods, so they bought little there.
+# History, 2026-09-26: control plane builds stalled before cloud-init created
+# vmware-system-user -- first with etcdConfiguration + containerd/kubelet
+# `volumes`, then with etcdConfiguration alone. Both removed from the control
+# plane; it now matches the other clusters on this Supervisor, none of which
+# use either. Workers keep their volumes, still unproven.
 #
 # classRef and version are what the previous se-cluster-01 ran on (see
 # se-vks-platform/docs/teardown-inventory-2026-09-25.md). v1.36.2 is also
@@ -65,19 +67,9 @@ spec:
         overrides:
         - name: vmClass
           value: best-effort-medium
-        # etcd gets its own disk through THIS, not through `volumes`. The
-        # ClusterClass provisions a dedicated volume at /var/lib/etcd sized
-        # maximumDBSizeGiB + 25% (compaction/defrag headroom) AND sets etcd's
-        # --quota-backend-bytes to match.
-        #
-        # Range 2-8. It can only ever be RAISED -- the schema rejects a
-        # decrease -- so start modest. etcd's own default quota is 2Gi.
-        - name: kubernetes
-          value:
-            etcdConfiguration:
-              maximumDBSizeGiB: 4
-        # No `volumes` override on the control plane: there is no cluster-level
-        # `volumes`, so it gets none.
+        # No `volumes` and no kubernetes.etcdConfiguration on the control plane
+        # -- see the history note at the top. There is no cluster-level
+        # `volumes`, so the control plane gets no extra disks.
 
     workers:
       machineDeployments:

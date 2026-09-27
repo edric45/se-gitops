@@ -14,6 +14,7 @@ which syncs automatically.
 |---|---|---|
 | `cert-manager/` | cert-manager + self-signed ClusterIssuer `se-selfsigned` | 1.20.2 |
 | `istio/` | Istio, **ambient** mode (ztunnel + istio-cni); ingress via Gateway API | 1.30.0 |
+| `headlamp/` | Headlamp web UI, exposed via the shared Gateway (route in `clusters/se-cluster-01/headlamp/`) | 0.42.0 |
 
 Kept apart from `../se-cluster-01/` on purpose: that app holds the Cluster CR
 and must never prune or delete. Add-ons are safe to add and remove.

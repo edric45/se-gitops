@@ -82,6 +82,7 @@ supervisor/    Cluster CR, AddonConfig/AddonInstall      -> Supervisor, se-ns-ar
 clusters/      se-cluster-01/<app>/: deployed INSIDE the cluster by ArgoCD
                  istio-ingress/  shared Gateway (class istio) on an Avi VIP
                  demo-ambient/   nginx in the ambient mesh behind that Gateway
+                 headlamp/       HTTPRoute + backend TLS + login accounts for the add-on
 scripts/       check-addon-values.py: validate add-on values before pushing
 ```
 

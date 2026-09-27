@@ -1,0 +1,54 @@
+# Login identities for Headlamp.
+#
+# Named headlamp-login-* on purpose: the add-on already owns a
+# ClusterRoleBinding called headlamp-admin (for its own ServiceAccount), and
+# two owners of one object would fight.
+#
+# Headlamp has no user database: you paste a ServiceAccount token at its
+# login screen and the UI acts as that account. Whatever the account may do,
+# the person holding the token may do -- from anywhere that can reach the VIP.
+#
+# Get a short-lived token (never store one in git):
+#   kubectl --context se-cluster-01:se-cluster-01 -n headlamp create token headlamp-login-viewer --duration=8h
+#   kubectl --context se-cluster-01:se-cluster-01 -n headlamp create token headlamp-login-admin  --duration=1h
+---
+# Read-only browsing.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: headlamp-login-viewer
+  namespace: headlamp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-login-viewer
+subjects:
+- kind: ServiceAccount
+  name: headlamp-login-viewer
+  namespace: headlamp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+---
+# Full control. Headlamp is exposed on an external VIP, so keep these tokens
+# short-lived. Remove this account if full control is not needed.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: headlamp-login-admin
+  namespace: headlamp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-login-admin
+subjects:
+- kind: ServiceAccount
+  name: headlamp-login-admin
+  namespace: headlamp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin

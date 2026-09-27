@@ -9,8 +9,14 @@
 #                            second Envoy + VIP, refused by PodSecurity in the
 #                            add-on-owned namespace) or reference one in its
 #                            own namespace -- it cannot attach to ours
-#   tls off                  TLS belongs at the Gateway; the Gateway speaks
-#                            plain HTTP to Headlamp inside the cluster
+#   tls: left at default     Headlamp ALWAYS serves HTTPS on 4466: the add-on
+#                            passes -tls-cert-path/-tls-key-path regardless.
+#                            tls.certManager.enabled=false only stops it from
+#                            creating the cert, and the pod then hangs on the
+#                            missing Secret headlamp-tls-cert (seen 2026-09-27).
+#                            So cert-manager issues it (self-signed), and the
+#                            Gateway speaks TLS to Headlamp -- see the
+#                            DestinationRule in clusters/se-cluster-01/headlamp/.
 #
 # Login is by ServiceAccount token (Headlamp has no user database); the
 # accounts are in clusters/se-cluster-01/headlamp/.
@@ -26,13 +32,11 @@ spec:
     namespace: headlamp
     createNamespace: true
     hostname: headlamp.172.17.10.29.nip.io
+    # hostname also goes into the certificate's SANs.
     service:
       type: ClusterIP
-      port: 80
+      port: 443
       targetPort: 4466
-    tls:
-      certManager:
-        enabled: false
     gatewayApi:
       enabled: false
 ---

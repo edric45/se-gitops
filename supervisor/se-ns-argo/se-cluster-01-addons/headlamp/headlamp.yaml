@@ -1,0 +1,58 @@
+# Headlamp 0.42.0 on se-cluster-01 -- a web UI for the cluster.
+#
+# Exposed through the SHARED Istio Gateway (istio-ingress/public, VIP
+# 172.17.10.29) by an HTTPRoute in git -- clusters/se-cluster-01/headlamp/ --
+# not by the add-on's own options:
+#
+#   service.type ClusterIP   no LoadBalancer VIP of its own (the add-on default)
+#   gatewayApi off           the add-on can only create its OWN Gateway (a
+#                            second Envoy + VIP, refused by PodSecurity in the
+#                            add-on-owned namespace) or reference one in its
+#                            own namespace -- it cannot attach to ours
+#   tls off                  TLS belongs at the Gateway; the Gateway speaks
+#                            plain HTTP to Headlamp inside the cluster
+#
+# Login is by ServiceAccount token (Headlamp has no user database); the
+# accounts are in clusters/se-cluster-01/headlamp/.
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonConfig
+metadata:
+  name: se-cluster-01-headlamp
+  namespace: se-ns-argo
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  values:
+    namespace: headlamp
+    createNamespace: true
+    hostname: headlamp.172.17.10.29.nip.io
+    service:
+      type: ClusterIP
+      port: 80
+      targetPort: 4466
+    tls:
+      certManager:
+        enabled: false
+    gatewayApi:
+      enabled: false
+---
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonInstall
+metadata:
+  name: se-cluster-01-headlamp
+  namespace: se-ns-argo
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  addonRef:
+    name: headlamp
+  addonConfigNameTemplate: se-cluster-01-headlamp
+  clusters:
+  - selector:
+      matchLabels:
+        cluster.x-k8s.io/cluster-name: se-cluster-01
+  crossNamespaceSelection: Blocked
+  releaseFilter:
+    ref:
+      name: headlamp.kubernetes.vmware.com.0.42.0-vmware.1-vks.1
+  stopMatchingBehavior: Delete

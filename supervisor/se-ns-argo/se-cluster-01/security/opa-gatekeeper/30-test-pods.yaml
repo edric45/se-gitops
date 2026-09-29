@@ -1,0 +1,47 @@
+# SAMPLE -- not applied. Test objects for the constraints, applied INSIDE the
+# workload cluster. With a constraint in `deny`, the bad ones are REJECTED
+# at admission; in `dryrun` they are created and show up in the audit.
+#
+#   kubectl --context se-cluster-01:se-cluster-01 apply -f 30-test-pods.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opa-demo
+  labels:
+    owner: platform-team                # passes namespaces-must-have-owner
+---
+# Violates: allowed-registries (docker.io), no-latest-tag, memory-limits-required
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod
+  namespace: opa-demo
+spec:
+  securityContext: {runAsNonRoot: true, runAsUser: 101, seccompProfile: {type: RuntimeDefault}}
+  containers:
+  - name: web
+    image: nginxinc/nginx-unprivileged:latest
+    securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+---
+# Passes all four (image from the approved registry, pinned tag, limits set).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: good-pod
+  namespace: opa-demo
+spec:
+  securityContext: {runAsNonRoot: true, runAsUser: 101, seccompProfile: {type: RuntimeDefault}}
+  containers:
+  - name: web
+    image: harbor.wkld01.vks.lab/library/nginx-unprivileged:1.27-alpine
+    resources:
+      requests: {cpu: 50m, memory: 64Mi}
+      limits: {memory: 128Mi}
+    securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+---
+# Violates namespaces-must-have-owner (no owner label).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opa-demo-no-owner

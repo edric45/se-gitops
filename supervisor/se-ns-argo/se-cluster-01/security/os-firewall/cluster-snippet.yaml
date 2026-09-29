@@ -1,0 +1,33 @@
+# SAMPLE SNIPPET -- not a standalone manifest; not applied.
+#
+# Node host firewall, merged into ../../00-cluster.yaml under
+# spec.topology.variables (scopes: cluster / controlPlane / workers).
+#
+# How it behaves, per the ClusterClass schema:
+#   - rules are MERGED with VKS's built-in rules that the cluster needs to
+#     work (API server, kubelet, CNI, ...) -- you cannot lock those out
+#   - each rule opens a port range for a protocol, optionally from one source
+#     CIDR only; there is no "action" field, so these are allow rules
+#   - protocol: tcp, udp, icmp, or any IANA protocol number
+# Not marked as requiring a rollout (unlike osConfiguration). Untested here.
+spec:
+  topology:
+    variables:
+    - name: node
+      value:
+        firewall:
+          inboundRules:
+          # External Prometheus scraping node-exporter, from the monitoring
+          # network only.
+          - protocol: tcp
+            fromPort: 9100
+            toPort: 9100
+            source: 10.160.0.0/16
+          # An app using a hostPort, reachable only from the LB subnet.
+          - protocol: tcp
+            fromPort: 8443
+            toPort: 8443
+            source: 100.64.32.0/24
+          # Ping from the management network, for troubleshooting.
+          - protocol: icmp
+            source: 10.160.0.0/16

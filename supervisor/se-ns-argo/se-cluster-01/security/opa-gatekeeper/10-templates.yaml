@@ -1,0 +1,124 @@
+# SAMPLE -- not applied. Gatekeeper ConstraintTemplates (policy logic in Rego).
+# Applied INSIDE the workload cluster, after the Gatekeeper add-on is Ready:
+#   kubectl --context se-cluster-01:se-cluster-01 apply -f 10-templates.yaml
+#
+# Patterned on the open-source gatekeeper-library. Rego uses the v1 syntax
+# (`contains`/`if`) behind `import rego.v1`.
+---
+# 1. Required labels -- e.g. every namespace must name an owner.
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredlabels
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredLabels
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            labels:
+              type: array
+              items: {type: string}
+  targets:
+  - target: admission.k8s.gatekeeper.sh
+    rego: |
+      package k8srequiredlabels
+      import rego.v1
+
+      violation contains {"msg": msg, "details": {"missing_labels": missing}} if {
+        provided := {label | input.review.object.metadata.labels[label]}
+        required := {label | some label in input.parameters.labels}
+        missing := required - provided
+        count(missing) > 0
+        msg := sprintf("missing required labels: %v", [missing])
+      }
+---
+# 2. Allowed registries -- images only from approved registries (supply chain).
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sallowedrepos
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAllowedRepos
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            repos:
+              type: array
+              items: {type: string}
+  targets:
+  - target: admission.k8s.gatekeeper.sh
+    rego: |
+      package k8sallowedrepos
+      import rego.v1
+
+      containers contains c if { some c in input.review.object.spec.containers }
+      containers contains c if { some c in input.review.object.spec.initContainers }
+
+      violation contains {"msg": msg} if {
+        some c in containers
+        not strings.any_prefix_match(c.image, input.parameters.repos)
+        msg := sprintf("container <%v>: image <%v> is not from an approved registry %v",
+                       [c.name, c.image, input.parameters.repos])
+      }
+---
+# 3. No :latest and no untagged images -- deployments must be reproducible.
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sdisallowlatest
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sDisallowLatest
+  targets:
+  - target: admission.k8s.gatekeeper.sh
+    rego: |
+      package k8sdisallowlatest
+      import rego.v1
+
+      containers contains c if { some c in input.review.object.spec.containers }
+      containers contains c if { some c in input.review.object.spec.initContainers }
+
+      floating(image) if endswith(image, ":latest")
+      floating(image) if {
+        not contains(image, "@")                       # pinned by digest is fine
+        parts := split(image, "/")
+        not contains(parts[count(parts) - 1], ":")     # no tag on the last segment
+      }
+
+      violation contains {"msg": msg} if {
+        some c in containers
+        floating(c.image)
+        msg := sprintf("container <%v>: image <%v> uses :latest or no tag", [c.name, c.image])
+      }
+---
+# 4. Memory limits required -- no container can starve a node.
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequirememorylimits
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequireMemoryLimits
+  targets:
+  - target: admission.k8s.gatekeeper.sh
+    rego: |
+      package k8srequirememorylimits
+      import rego.v1
+
+      violation contains {"msg": msg} if {
+        some c in input.review.object.spec.containers
+        not c.resources.limits.memory
+        msg := sprintf("container <%v> has no memory limit", [c.name])
+      }

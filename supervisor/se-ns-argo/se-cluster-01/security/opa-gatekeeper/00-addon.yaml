@@ -1,0 +1,41 @@
+# SAMPLE -- not applied. OPA Gatekeeper as a VKS add-on (3.22.2), declared on
+# the Supervisor like every other add-on.
+#
+# To use it for real, move this file to
+#   supervisor/se-ns-argo/se-cluster-01-addons/gatekeeper/gatekeeper.yaml
+# and the add-ons ApplicationSet installs it.
+#
+# Gatekeeper = OPA (Open Policy Agent) as a Kubernetes admission controller:
+#   ConstraintTemplate  the policy logic, in Rego       (10-templates.yaml)
+#   Constraint          where and how it applies         (20-constraints.yaml)
+#   audit               re-checks EXISTING objects every auditInterval seconds
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonConfig
+metadata:
+  name: se-cluster-01-gatekeeper
+  namespace: se-ns-argo
+spec:
+  values:
+    replicas: 2                   # default 3; 2 is plenty for a lab
+    auditInterval: 60             # seconds between audit runs
+    constraintViolationsLimit: 20 # violations reported per constraint
+    disableMutation: true         # validation only, no mutating webhook
+---
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonInstall
+metadata:
+  name: se-cluster-01-gatekeeper
+  namespace: se-ns-argo
+spec:
+  addonRef:
+    name: gatekeeper
+  addonConfigNameTemplate: se-cluster-01-gatekeeper
+  clusters:
+  - selector:
+      matchLabels:
+        cluster.x-k8s.io/cluster-name: se-cluster-01
+  crossNamespaceSelection: Blocked
+  releaseFilter:
+    ref:
+      name: gatekeeper.kubernetes.vmware.com.3.22.2-vmware.1-vks.1
+  stopMatchingBehavior: Delete

@@ -1,0 +1,127 @@
+# SAMPLE -- not applied. Constraints: where each template applies.
+# Applied INSIDE the workload cluster, after 10-templates.yaml:
+#   kubectl --context se-cluster-01:se-cluster-01 apply -f 20-constraints.yaml
+#
+# All start in `dryrun`: nothing is blocked, violations are only REPORTED by
+# the audit (status.violations on each constraint). The workshop flow is:
+#   1. apply in dryrun  -> show what WOULD have been rejected, cluster-wide
+#        kubectl get k8sallowedrepos allowed-registries -o yaml | yq .status.violations
+#   2. switch one to `deny` -> show a kubectl apply being rejected at admission
+#   (`warn` is the middle ground: allowed, but the user sees a warning)
+#
+# Platform namespaces are excluded so VKS's own components are never affected.
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: namespaces-must-have-owner
+spec:
+  enforcementAction: dryrun
+  match:
+    kinds:
+    - apiGroups: [""]
+      kinds: ["Namespace"]
+    excludedNamespaces:
+    - kube-system
+    - kube-public
+    - kube-node-lease
+    - default
+    - "vmware-system-*"
+    - "tanzu-system-*"
+    - "tkg-system"
+    - "istio-system"
+    - "gatekeeper-system"
+    - "cert-manager"
+    - "pinniped-*"
+    - "secretgen-controller"
+    - "velero*"
+    - "vks-*"
+    - "flow-aggregator"
+  parameters:
+    labels: ["owner"]
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedRepos
+metadata:
+  name: allowed-registries
+spec:
+  enforcementAction: dryrun
+  match:
+    kinds:
+    - apiGroups: [""]
+      kinds: ["Pod"]
+    excludedNamespaces:
+    - kube-system
+    - kube-public
+    - kube-node-lease
+    - default
+    - "vmware-system-*"
+    - "tanzu-system-*"
+    - "tkg-system"
+    - "istio-system"
+    - "gatekeeper-system"
+    - "cert-manager"
+    - "pinniped-*"
+    - "secretgen-controller"
+    - "velero*"
+    - "vks-*"
+    - "flow-aggregator"
+  parameters:
+    repos:
+    - "depot.kube-system.svc/"          # VKS's in-cluster package registry
+    - "harbor.wkld01.vks.lab/"          # example: an internal Harbor
+    # docker.io images (e.g. the nginx demos) will show up as violations.
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sDisallowLatest
+metadata:
+  name: no-latest-tag
+spec:
+  enforcementAction: dryrun
+  match:
+    kinds:
+    - apiGroups: [""]
+      kinds: ["Pod"]
+    excludedNamespaces:
+    - kube-system
+    - kube-public
+    - kube-node-lease
+    - default
+    - "vmware-system-*"
+    - "tanzu-system-*"
+    - "tkg-system"
+    - "istio-system"
+    - "gatekeeper-system"
+    - "cert-manager"
+    - "pinniped-*"
+    - "secretgen-controller"
+    - "velero*"
+    - "vks-*"
+    - "flow-aggregator"
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequireMemoryLimits
+metadata:
+  name: memory-limits-required
+spec:
+  enforcementAction: dryrun
+  match:
+    kinds:
+    - apiGroups: [""]
+      kinds: ["Pod"]
+    excludedNamespaces:
+    - kube-system
+    - kube-public
+    - kube-node-lease
+    - default
+    - "vmware-system-*"
+    - "tanzu-system-*"
+    - "tkg-system"
+    - "istio-system"
+    - "gatekeeper-system"
+    - "cert-manager"
+    - "pinniped-*"
+    - "secretgen-controller"
+    - "velero*"
+    - "vks-*"
+    - "flow-aggregator"

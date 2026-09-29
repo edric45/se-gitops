@@ -1,0 +1,21 @@
+# SAMPLE -- not applied. Applied INSIDE the workload cluster:
+#   kubectl --context se-cluster-01:se-cluster-01 apply -f 10-strict-mtls.yaml
+#
+# Require mTLS for everything reaching demo-ambient. In ambient mode ztunnel
+# enforces this (no sidecars): plaintext from outside the mesh is refused.
+#
+# The mesh default stays PERMISSIVE (istio add-on: enableStrictMTLS: false),
+# so namespaces opt in one by one -- or set enableStrictMTLS: true in the
+# add-on for mesh-wide STRICT.
+#
+# Demo: from a pod in a namespace WITHOUT istio.io/dataplane-mode=ambient,
+#   curl http://nginx.demo-ambient/     -> before: 200   after: connection reset
+# while traffic via the Gateway keeps working (it speaks mTLS).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: strict
+  namespace: demo-ambient
+spec:
+  mtls:
+    mode: STRICT

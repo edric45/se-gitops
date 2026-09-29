@@ -1,0 +1,76 @@
+# SAMPLE -- not applied. Applied INSIDE the workload cluster:
+#   kubectl --context se-cluster-01:se-cluster-01 apply -f 03-demo-workloads.yaml
+#
+# Two copies of the same nginx:
+#   web-default  RuntimeDefault profile (what every pod on VKS gets anyway)
+#   web-locked   the custom Localhost profile vks-demo-locked
+#
+# Demo -- run each against both pods (P=deploy/web-default or deploy/web-locked):
+#   kubectl -n apparmor-demo exec $P -- cat /proc/1/attr/current     # which profile
+#   kubectl -n apparmor-demo exec $P -- sh -c 'echo hi'              # locked: sh denied
+#   kubectl -n apparmor-demo exec $P -- touch /etc/hacked            # locked: denied
+#   kubectl -n apparmor-demo exec $P -- wget -qO- http://example.com # locked: denied
+#   curl http://<pod IP>:8080/                                       # both still serve
+# Denials land in the node's kernel log:  apparmor="DENIED" ... profile="vks-demo-locked"
+#
+# nginx is started directly (command below): the image's normal entrypoint
+# is a shell script, which the "no shell" rule would block at startup.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: apparmor-demo
+  labels:
+    # restricted allows AppArmor RuntimeDefault and Localhost (not Unconfined).
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-default
+  namespace: apparmor-demo
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: web-default}}
+  template:
+    metadata: {labels: {app: web-default}}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile: {type: RuntimeDefault}
+        appArmorProfile: {type: RuntimeDefault}
+      containers:
+      - name: nginx
+        image: nginxinc/nginx-unprivileged:1.27-alpine
+        command: ["nginx", "-g", "daemon off;"]
+        ports: [{containerPort: 8080}]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: ["ALL"]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-locked
+  namespace: apparmor-demo
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: web-locked}}
+  template:
+    metadata: {labels: {app: web-locked}}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile: {type: RuntimeDefault}
+        appArmorProfile:
+          type: Localhost
+          localhostProfile: vks-demo-locked    # the name INSIDE the profile content
+      containers:
+      - name: nginx
+        image: nginxinc/nginx-unprivileged:1.27-alpine
+        command: ["nginx", "-g", "daemon off;"]
+        ports: [{containerPort: 8080}]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: ["ALL"]}

@@ -1,0 +1,79 @@
+# SAMPLE -- not applied. AppArmor profile for a locked-down web container.
+#
+# Applied on the SUPERVISOR, in the Cluster's namespace (se-ns-argo). VKS
+# loads spec.content onto the nodes of every cluster that lists this object
+# in osConfiguration.securityContext.appArmor.profiles (02-cluster-snippet).
+#
+#   kubectl --context se-ns-argo apply -f 01-apparmorprofile.yaml
+#
+# spec.content is IMMUTABLE: a new version of the profile = a new object
+# (e.g. vks-demo-locked-v2) and a Cluster change to reference it.
+#
+# The object name and the profile name inside the content are kept the same
+# (vks-demo-locked) so there is no doubt which one a Pod's localhostProfile
+# must use -- AppArmor itself knows only the name inside the content.
+#
+# What it enforces, even for root inside the container:
+#   - config, binaries and libraries cannot be modified
+#   - no shells, download tools or package managers can be run
+#   - no raw sockets (sniffing, spoofing, scanning)
+#   - no mount / kernel-module / sys_admin tricks
+#   - no writes to kernel settings, no reading the ServiceAccount token
+apiVersion: os.kubernetes.vmware.com/v1alpha1
+kind: AppArmorProfile
+metadata:
+  name: vks-demo-locked
+  namespace: se-ns-argo
+spec:
+  content: |
+    #include <tunables/global>
+
+    profile vks-demo-locked flags=(attach_disconnected,mediate_deleted) {
+      #include <abstractions/base>
+
+      # Files: read and run what the app needs ...
+      file,
+      # ... but never change the image's config, binaries or libraries.
+      deny /etc/**  wl,
+      deny /usr/**  wl,
+      deny /bin/**  wl,
+      deny /sbin/** wl,
+      deny /lib/**  wl,
+
+      # No shells or tools: blocks `kubectl exec -it ... sh`, reverse shells
+      # and post-exploit downloads. On Alpine images sh/wget/vi are busybox.
+      deny /bin/busybox x,
+      deny /bin/sh      x,
+      deny /bin/bash    x,
+      deny /usr/bin/curl x,
+      deny /usr/bin/wget x,
+      deny /sbin/apk    x,
+      deny /usr/bin/apt* x,
+
+      # Network: TCP/UDP only. No raw or packet sockets.
+      network inet  stream,
+      network inet6 stream,
+      network inet  dgram,
+      network inet6 dgram,
+      deny network raw,
+      deny network packet,
+
+      # Dangerous capabilities and mount operations.
+      deny capability sys_admin,
+      deny capability sys_module,
+      deny capability net_raw,
+      deny mount,
+      deny umount,
+      deny pivot_root,
+
+      # Kernel settings and the Kubernetes API token are off limits.
+      deny /proc/sys/** w,
+      deny /sys/**      w,
+      deny @{PROC}/sysrq-trigger rwklx,
+      deny /var/run/secrets/kubernetes.io/** r,
+      deny /run/secrets/kubernetes.io/**     r,
+
+      # Let the runtime stop the container (SIGTERM comes from outside).
+      signal (receive) peer=unconfined,
+      signal (send,receive) peer=vks-demo-locked,
+    }

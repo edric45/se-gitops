@@ -1,0 +1,82 @@
+# SAMPLE -- not applied. Applied INSIDE the workload cluster.
+#
+# L7 policy in ambient: HTTP method and path rules need a WAYPOINT, an Envoy
+# that istiod generates for the namespace (ztunnel only sees L4).
+#
+#   client -> ztunnel -> waypoint (L7 policy) -> ztunnel -> nginx
+#
+# Three pieces:
+#   1. the waypoint itself: a Gateway API Gateway, class istio-waypoint
+#   2. enrol the namespace's services to use it (label below)
+#   3. the L7 AuthorizationPolicy, attached to the Service (targetRefs)
+#
+# CAVEAT (seen on this cluster): the waypoint's Envoy does not set
+# seccompProfile, so PodSecurity "restricted" refuses it -- same as the
+# ingress Gateway. demo-ambient enforces restricted today, so its namespace
+# needs enforce=baseline (warn/audit restricted) before the waypoint can run.
+#
+# EXTERNAL traffic skips the waypoint by default (the Gateway talks straight
+# to ztunnel). Label the Service istio.io/ingress-use-waypoint=true so the L7
+# policy also applies to requests from outside.
+#
+# Demo:  curl http://172.17.10.29/            -> 200
+#        curl -X POST http://172.17.10.29/     -> 403 RBAC: access denied
+#        curl http://172.17.10.29/admin        -> 403
+---
+# 1 + 2: namespace labels (merge into the existing demo-ambient Namespace).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-ambient
+  labels:
+    istio.io/dataplane-mode: ambient
+    istio.io/use-waypoint: waypoint          # route this namespace via the waypoint
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: demo-ambient
+  labels:
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+  - name: mesh
+    port: 15008
+    protocol: HBONE
+---
+# Make external (Gateway) traffic pass the waypoint too.
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: demo-ambient
+  labels:
+    istio.io/ingress-use-waypoint: "true"
+---
+# 3: read-only website: only GET on / and /index.html, only via the Gateway.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: nginx-read-only
+  namespace: demo-ambient
+spec:
+  targetRefs:
+  - kind: Service
+    group: ""
+    name: nginx
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/istio-ingress/sa/public-istio
+    to:
+    - operation:
+        methods: ["GET", "HEAD"]
+        paths: ["/", "/index.html"]

@@ -1,0 +1,20 @@
+# SAMPLE SNIPPET -- not a standalone manifest; not applied.
+#
+# Merge into ../../00-cluster.yaml under spec.topology.variables to load the
+# profile from 01-apparmorprofile.yaml onto the nodes.
+#
+# osConfiguration supports scopes cluster / controlPlane / workers, so the
+# same list could instead go into a workers override only.
+#
+# NOTE: osConfiguration is ONE variable. If os-lockdown/cluster-snippet.yaml
+# is used too, combine both into a single `osConfiguration` entry -- two
+# entries with the same name are not allowed.
+spec:
+  topology:
+    variables:
+    - name: osConfiguration
+      value:
+        securityContext:
+          appArmor:
+            profiles:
+            - name: vks-demo-locked      # AppArmorProfile object in se-ns-argo

@@ -1,0 +1,32 @@
+# SAMPLE -- not applied. Applied INSIDE the workload cluster.
+#
+# L4 zero trust, enforced by ztunnel -- no waypoint needed.
+# Only the ingress Gateway's identity may reach nginx; every other workload,
+# even one inside the mesh, is denied.
+#
+# Identities are SPIFFE IDs (trust domain/ns/<ns>/sa/<serviceaccount>), taken
+# from the mTLS certificate -- not from IPs, so they survive pod churn.
+# The Gateway's identity was seen in ztunnel's log:
+#   spiffe://cluster.local/ns/istio-ingress/sa/public-istio
+#
+# ztunnel can only enforce L4 fields (principals, namespaces, ports, IPs).
+# A policy with L7 fields (methods, paths, headers) needs a waypoint -- see
+# 30-waypoint-l7-authz.yaml. Without one, such a policy would DENY ALL.
+#
+# Demo: curl http://172.17.10.29/ -> 200 (via Gateway)
+#       from a mesh pod: curl http://nginx.demo-ambient/ -> connection reset
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: nginx-only-from-gateway
+  namespace: demo-ambient
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/istio-ingress/sa/public-istio

@@ -1,0 +1,84 @@
+# SAMPLE -- not applied. Applied INSIDE the workload cluster.
+#
+# TLS at the edge: HTTPS on the shared Gateway, certificate from cert-manager,
+# and HTTP redirected to HTTPS.
+#
+#   browser --HTTPS (cert below)--> Gateway "public" --mTLS (ztunnel)--> apps
+#
+# The certificate comes from the se-selfsigned ClusterIssuer that the
+# cert-manager add-on creates (self-signed: browsers will warn). For a real
+# certificate, point issuerRef at an ACME or internal-CA issuer instead.
+#
+# TLS VERSIONS -- where they are set on this stack:
+#   edge (this Gateway)     Envoy defaults: TLS 1.2 minimum. Istio's Gateway
+#                           API implementation reads extra TLS settings from
+#                           listener tls.options -- not used here, test first.
+#   in-mesh mTLS            istio add-on value meshConfig.meshMTLS.minProtocolVersion
+#                           (default TLSV1_2; TLSV1_3 to tighten)
+#   Avi VIP                 the Service here is plain L4 (TCP passthrough) --
+#                           TLS/SSL profiles on Avi apply when Avi itself
+#                           terminates TLS (a separate topic)
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: public-gateway-tls
+  namespace: istio-ingress          # must be in the Gateway's namespace
+spec:
+  secretName: public-gateway-tls
+  dnsNames:
+  - "*.172.17.10.29.nip.io"
+  - "172.17.10.29.nip.io"
+  duration: 2160h                   # 90 days
+  renewBefore: 360h                 # renew 15 days before expiry
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    kind: ClusterIssuer
+    name: se-selfsigned
+---
+# The existing Gateway with an HTTPS listener added (replaces gateway.yaml's).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: public
+  namespace: istio-ingress
+spec:
+  gatewayClassName: istio
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: https
+    protocol: HTTPS
+    port: 443
+    hostname: "*.172.17.10.29.nip.io"
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - kind: Secret
+        name: public-gateway-tls
+    allowedRoutes:
+      namespaces:
+        from: All
+---
+# Redirect every plain-HTTP request on the Gateway to HTTPS.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: http-to-https
+  namespace: istio-ingress
+spec:
+  parentRefs:
+  - name: public
+    sectionName: http              # only the port-80 listener
+  rules:
+  - filters:
+    - type: RequestRedirect
+      requestRedirect:
+        scheme: https
+        statusCode: 301

@@ -1,0 +1,78 @@
+# SAMPLE SNIPPET -- not a standalone manifest; not applied.
+#
+# Node OS hardening, merged into ../../00-cluster.yaml under
+# spec.topology.variables. Every setting here REPLACES THE NODES when
+# changed (the ClusterClass marks them "requires rollout").
+#
+# NOTE: osConfiguration is ONE variable -- if apparmor/02-cluster-snippet.yaml
+# is used too, put securityContext.appArmor into this same entry.
+#
+# TWO REQUIREMENTS for immutability, found by VKS's admission webhook
+# (dry-run against this Supervisor, 2026-09-29):
+#   1. Kubernetes release 1.36.0 or later. On v1.35.6 it is refused:
+#        "usrPartitionMode is only supported on Kubernetes Release version
+#         1.36.0 or greater"
+#   2. Set at CLUSTER level, every node pool must be pinned to Photon with the
+#      annotation below (it is a Photon-only feature). Otherwise:
+#        "requires every node pool to explicitly carry the
+#         run.tanzu.vmware.com/resolve-os-image annotation with os-name=photon"
+#      Alternative: set osConfiguration.immutability per node pool instead.
+# Verified: this snippet + the annotations + version v1.36.2+vmware.2 is
+# accepted. fips, grub and sshd are also accepted on v1.35.6.
+spec:
+  topology:
+    version: v1.36.2+vmware.2           # requirement 1 (upgrades the cluster!)
+    controlPlane:
+      metadata:
+        annotations:
+          run.tanzu.vmware.com/resolve-os-image: os-name=photon   # requirement 2
+    workers:
+      machineDeployments:
+      - name: se-cluster-01-np01
+        metadata:
+          annotations:
+            run.tanzu.vmware.com/resolve-os-image: os-name=photon # requirement 2
+    variables:
+    - name: osConfiguration
+      value:
+        # /usr (binaries, libraries) read-only on Photon OS nodes.
+        # VMware's own caveat: it does NOT stop a privileged Pod (root with
+        # CAP_SYS_ADMIN) from remounting /usr read-write. That gap is closed
+        # by PodSecurity (no privileged pods outside privileged namespaces)
+        # and AppArmor (the default profile already denies mount).
+        immutability:
+          usrPartitionMode: ReadOnly
+
+        # FIPS 140 mode for the node OS and Kubernetes components.
+        # Cluster scope only.
+        fips:
+          enabled: true
+
+        # Password-protect the boot loader: no editing boot entries to get a
+        # root shell (single-user / init=/bin/sh). If secretRef is omitted,
+        # VKS generates <cluster>-grub-password in the Cluster's namespace.
+        grub:
+          password:
+            enabled: true
+            user: root
+            secretRef:
+              name: se-cluster-01-grub-password    # see below
+              key: password
+
+        # Legal / compliance banner shown before SSH authentication.
+        sshd:
+          banner: |
+            Authorised use only. Activity on this system is monitored and logged.
+---
+# The GRUB password Secret, on the Supervisor next to the Cluster. The value
+# must be a PBKDF2 SHA-512 HASH, never the plain password:
+#   grub2-mkpasswd-pbkdf2      -> grub.pbkdf2.sha512.10000.<salt>.<hash>
+# Keep the real one out of git (create it by hand, or use a secret manager).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: se-cluster-01-grub-password
+  namespace: se-ns-argo
+type: Opaque
+stringData:
+  password: grub.pbkdf2.sha512.10000.REPLACE-WITH-SALT.REPLACE-WITH-HASH
